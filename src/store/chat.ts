@@ -16,6 +16,7 @@ interface ChatState {
   appendToMessage: (conversationId: string, messageId: string, text: string) => void
   updateMessage: (conversationId: string, messageId: string, patch: Partial<Message>) => void
   removeMessagesAfter: (conversationId: string, messageId: string) => void
+  clearMessages: (conversationId: string) => void
   clearAll: () => void
   updateSettings: (patch: Partial<Settings>) => void
   toggleSidebar: () => void
@@ -115,14 +116,21 @@ export const useChatStore = create<ChatState>()(
           ),
         })),
 
-      removeMessagesAfter: (conversationId, messageId) =>
-        set((s) => ({
-          conversations: s.conversations.map((c) => {
-            if (c.id !== conversationId) return c
-            const idx = c.messages.findIndex((m) => m.id === messageId)
-            return idx >= 0 ? { ...c, messages: c.messages.slice(0, idx + 1) } : c
-          }),
-        })),
+  removeMessagesAfter: (conversationId, messageId) =>
+    set((s) => ({
+      conversations: s.conversations.map((c) => {
+        if (c.id !== conversationId) return c
+        const idx = c.messages.findIndex((m) => m.id === messageId)
+        return idx >= 0 ? { ...c, messages: c.messages.slice(0, idx + 1) } : c
+      }),
+    })),
+
+  clearMessages: (conversationId) =>
+    set((s) => ({
+      conversations: s.conversations.map((c) =>
+        c.id === conversationId ? { ...c, messages: [], title: '新对话' } : c
+      ),
+    })),
 
       clearAll: () => set({ conversations: [], activeId: null }),
 

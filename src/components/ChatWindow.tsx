@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Download, Menu, PanelLeftOpen } from 'lucide-react'
+import { Download, PanelLeftOpen, Settings } from 'lucide-react'
 import { useChatStore, uid } from '../store/chat'
-import { streamChat } from '../api/client'
+import { useSettingsOpen } from './settingsOpen'
+import { fetchProviders, streamChat } from '../api/client'
 import MessageItem from './MessageItem'
 import ChatInput from './ChatInput'
-import type { Message } from '../types'
+import type { Message, ProviderInfo } from '../types'
 
 export default function ChatWindow() {
   const conversations = useChatStore((s) => s.conversations)
@@ -17,17 +18,53 @@ export default function ChatWindow() {
   const appendToMessage = useChatStore((s) => s.appendToMessage)
   const updateMessage = useChatStore((s) => s.updateMessage)
   const removeMessagesAfter = useChatStore((s) => s.removeMessagesAfter)
+  const clearMessages = useChatStore((s) => s.clearMessages)
 
   const [streaming, setStreaming] = useState(false)
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const pinnedRef = useRef(true) // 用户是否停留在底部附近（智能滚动）
 
   const active = conversations.find((c) => c.id === activeId) ?? null
+  const setShowSettings = useSettingsOpen((s) => s.setOpen)
 
-  // 流式输出 / 切换会话时自动滚到底部
+  // 获取可用提供商（用于输入门控与自动选择模型）
   useEffect(() => {
+    fetchProviders()
+      .then((list) => {
+        setProviders(list)
+        if (list.length === 0) return
+        const state = useChatStore.getState()
+        const current = list.find((p) => p.id === state.settings.provider)
+        const patch: Partial<typeof state.settings> = {}
+        if (!current) {
+          // 当前选择的提供商不在可用列表 → 切到第一个
+          patch.provider = list[0].id
+          patch.model = list[0].models[0] ?? ''
+        } else if (!state.settings.model && current.models.length > 0) {
+          patch.model = current.models[0]
+        }
+        if (Object.keys(patch).length) state.updateSettings(patch)
+      })
+      .catch(() => setProviders([]))
+  }, [])
+
+  // 智能滚动：流式输出或切换会话时，仅在用户停留在底部附近时自动滚动
+  useEffect(() => {
+    if (!pinnedRef.current) return
     bottomRef.current?.scrollIntoView({ behavior: streaming ? 'auto' : 'smooth' })
-  }, [active?.messages, streaming])
+  }, [active?.messages, activeId, streaming])
+
+  // 用户上翻超过 100px 时暂停自动滚动，回到底部后恢复
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100
+  }, [])
+
+  const ready = providers.length > 0 && !!settings.provider && !!settings.model
 
   const runCompletion = useCallback(
     async (conversationId: string, history: { role: 'user' | 'assistant'; content: string }[]) => {
@@ -62,10 +99,11 @@ export default function ChatWindow() {
             .conversations.find((c) => c.id === conversationId)
             ?.messages.find((m) => m.id === assistantId)
           const partial = current?.content ?? ''
+          const message = err instanceof Error ? err.message : String(err)
           updateMessage(conversationId, assistantId, {
             content: partial
-              ? partial + '\n\n---\n⚠️ 生成中断：' + (err instanceof Error ? err.message : String(err))
-              : '请求失败：' + (err instanceof Error ? err.message : String(err)),
+              ? partial + '\n\n---\n⚠️ 生成中断：' + message
+              : '请求失败：' + message,
             error: !partial,
           })
         }
@@ -79,7 +117,7 @@ export default function ChatWindow() {
 
   const handleSend = useCallback(
     (text: string) => {
-      if (streaming) return
+      if (streaming || !ready) return
       const convId = activeId ?? createConversation()
       const message: Message = { id: uid(), role: 'user', content: text, createdAt: Date.now() }
       addMessage(convId, message)
@@ -91,7 +129,7 @@ export default function ChatWindow() {
         .map(({ role, content }) => ({ role, content }))
       void runCompletion(convId, history)
     },
-    [streaming, activeId, createConversation, addMessage, runCompletion]
+    [streaming, ready, activeId, createConversation, addMessage, runCompletion]
   )
 
   const handleStop = useCallback(() => {
@@ -101,16 +139,19 @@ export default function ChatWindow() {
   const handleRegenerate = useCallback(() => {
     if (!active || streaming) return
     const msgs = active.messages
-    const lastAssistantIdx = [...msgs].reverse().findIndex((m) => m.role === 'assistant')
-    if (lastAssistantIdx < 0) return
-    const idx = msgs.length - 1 - lastAssistantIdx
+    // 从后往前找最后一条 assistant 消息的位置
+    const reversedIdx = [...msgs].reverse().findIndex((m) => m.role === 'assistant')
+    if (reversedIdx < 0) return
+    const assistantIdx = msgs.length - 1 - reversedIdx
+    // 重新生成前，删除它及其之后的全部内容，保留之前的纯历史
+    if (assistantIdx > 0) removeMessagesAfter(active.id, msgs[assistantIdx - 1].id)
+    else clearMessages(active.id)
     const history = msgs
-      .slice(0, idx)
+      .slice(0, assistantIdx)
       .filter((m) => !m.error)
       .map(({ role, content }) => ({ role, content }))
-    removeMessagesAfter(active.id, msgs[idx - 1]?.id ?? '')
     void runCompletion(active.id, history)
-  }, [active, streaming, removeMessagesAfter, runCompletion])
+  }, [active, streaming, removeMessagesAfter, clearMessages, runCompletion])
 
   const exportMarkdown = useCallback(() => {
     if (!active) return
@@ -164,11 +205,10 @@ export default function ChatWindow() {
       </header>
 
       {/* 消息区 */}
-      <main className="flex-1 overflow-y-auto">
+      <main ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
         {empty ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 px-6">
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/20">
-              <Menu size={0} className="hidden" />
               <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor">
                 <path d="M13 2 3 14h7l-1 8 12-14h-8l0-6z" />
               </svg>
@@ -177,9 +217,19 @@ export default function ChatWindow() {
               欢迎使用 FlyChat
             </h2>
             <p className="max-w-md text-center text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-              一站式 AI 聊天平台。支持 OpenAI / DeepSeek / Claude / Gemini 等多家模型，
-              在右上角「设置」中选择服务端已配置的提供商和模型后即可开始对话。
+              {ready
+                ? '一站式 AI 聊天平台。输入消息开始对话，支持流式输出、Markdown 渲染与多会话管理。'
+                : '一站式 AI 聊天平台。请先在右下角「设置」中选择服务端已配置的提供商和模型，即可开始对话。'}
             </p>
+            {!ready && (
+              <button
+                onClick={() => setShowSettings(true)}
+                className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-500"
+              >
+                <Settings size={15} />
+                去设置
+              </button>
+            )}
           </div>
         ) : (
           <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
@@ -206,7 +256,12 @@ export default function ChatWindow() {
         onSend={handleSend}
         onStop={handleStop}
         streaming={streaming}
-        disabled={false}
+        disabled={!ready}
+        disabledHint={
+          providers.length === 0
+            ? '请先在 server/.env 配置 API Key 并重启后端'
+            : '请先在上方「设置」中选择模型'
+        }
       />
     </div>
   )

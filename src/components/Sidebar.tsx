@@ -89,7 +89,7 @@ export default function Sidebar() {
   const setShowSettings = useSettingsOpen((s) => s.setOpen)
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+    <aside className="fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 shadow-xl transition-transform dark:border-zinc-800 dark:bg-zinc-900 md:relative md:z-auto md:w-64 md:shadow-none">
       <div className="flex items-center justify-between px-3 pb-2 pt-3">
         <div className="flex items-center gap-2 px-1">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-white">
