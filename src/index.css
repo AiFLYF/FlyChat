@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+/* Tailwind v4：以 class 策略启用暗色模式 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* Markdown 正文排版 */
+.markdown-body {
+  @apply text-zinc-800 dark:text-zinc-100;
+}
+.markdown-body > *:first-child {
+  margin-top: 0;
+}
+.markdown-body > *:last-child {
+  margin-bottom: 0;
+}
+.markdown-body p {
+  @apply my-2.5;
+}
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  @apply mb-2 mt-5 font-semibold;
+}
+.markdown-body h1 { @apply text-xl; }
+.markdown-body h2 { @apply text-lg; }
+.markdown-body h3 { @apply text-base; }
+.markdown-body ul {
+  @apply my-2.5 list-disc space-y-1 pl-6;
+}
+.markdown-body ol {
+  @apply my-2.5 list-decimal space-y-1 pl-6;
+}
+.markdown-body blockquote {
+  @apply my-3 border-l-4 border-zinc-300 pl-3 text-zinc-500 dark:border-zinc-600 dark:text-zinc-400;
+}
+.markdown-body hr {
+  @apply my-4 border-zinc-200 dark:border-zinc-700;
+}
+.markdown-body pre code {
+  @apply bg-transparent p-0 text-[13px] leading-6 text-zinc-800 dark:text-zinc-100;
+}
+
+/* 滚动条美化 */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-zinc-300 dark:bg-zinc-700;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
