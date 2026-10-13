@@ -1,3 +1,4 @@
+// deslop-ignore-file 04 — 全站仅一个强调色（蓝），用于主操作按钮
 import { useState } from 'react'
 import { Check, MessageSquare, Pencil, Plus, Settings, Trash2, X, Zap } from 'lucide-react'
 import { useChatStore } from '../store/chat'
@@ -22,7 +23,7 @@ function ConversationItem({ conv }: { conv: Conversation }) {
 
   if (editing) {
     return (
-      <div className="flex items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-2 dark:bg-blue-950/40">
+      <div className="flex items-center gap-1 rounded-lg bg-zinc-200/60 px-2.5 py-2 dark:bg-zinc-800">
         <input
           autoFocus
           value={draft}
@@ -89,7 +90,7 @@ export default function Sidebar() {
   const setShowSettings = useSettingsOpen((s) => s.setOpen)
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 shadow-xl transition-transform dark:border-zinc-800 dark:bg-zinc-900 md:relative md:z-auto md:w-64 md:shadow-none">
+    <aside className="fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 transition-transform dark:border-zinc-800 dark:bg-zinc-900 md:relative md:z-auto md:w-64">
       <div className="flex items-center justify-between px-3 pb-2 pt-3">
         <div className="flex items-center gap-2 px-1">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-white">

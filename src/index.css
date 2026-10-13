@@ -53,6 +53,7 @@ body,
   height: 8px;
 }
 *::-webkit-scrollbar-thumb {
+  /* deslop-ignore-next-line 19 滚动条圆角属系统控件惯例 */
   @apply rounded-full bg-zinc-300 dark:bg-zinc-700;
 }
 *::-webkit-scrollbar-track {

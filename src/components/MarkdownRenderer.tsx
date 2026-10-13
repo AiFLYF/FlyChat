@@ -1,3 +1,4 @@
+// deslop-ignore-file 19 22 — 代码块需要边框与圆角同框以包住横向溢出的代码
 import { memo, useCallback, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -54,6 +55,7 @@ const CodeBlock = memo(function CodeBlock(props: {
   }
 
   return (
+    // deslop-ignore 22 代码块需要边框与圆角同框以包住溢出的代码
     <div className="group/code my-3 overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-700/60">
       <div className="flex items-center justify-between bg-zinc-100 px-3 py-1.5 dark:bg-zinc-800">
         <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">

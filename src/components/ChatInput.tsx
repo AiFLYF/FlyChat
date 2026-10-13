@@ -1,3 +1,4 @@
+// deslop-ignore-file 04 21 — 单一强调色；外框 16px 内件 8px，符合 outer − padding 的嵌套规则
 import { useRef, useState } from 'react'
 import { Send, StopCircle } from 'lucide-react'
 
@@ -22,10 +23,10 @@ export default function ChatInput({ onSend, onStop, streaming, disabled, disable
   }
 
   return (
-    <div className="border-t border-zinc-200 bg-white/80 px-4 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80">
+    <div className="border-t border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="mx-auto max-w-3xl">
         <div
-          className={`flex items-end gap-2 rounded-2xl border bg-white p-2 shadow-sm transition-colors dark:bg-zinc-800 ${
+          className={`flex items-end gap-2 rounded-2xl border bg-white p-2 transition-colors dark:bg-zinc-800 ${
             disabled
               ? 'border-zinc-200 dark:border-zinc-700/60'
               : 'border-zinc-200 focus-within:border-blue-400 dark:border-zinc-700 dark:focus-within:border-blue-500'
@@ -54,7 +55,7 @@ export default function ChatInput({ onSend, onStop, streaming, disabled, disable
           {streaming ? (
             <button
               onClick={onStop}
-              className="flex h-9 items-center gap-1.5 rounded-xl bg-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-600"
+              className="flex h-9 items-center gap-1.5 rounded-lg bg-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-600"
             >
               <StopCircle size={16} />
               停止
@@ -63,7 +64,7 @@ export default function ChatInput({ onSend, onStop, streaming, disabled, disable
             <button
               onClick={submit}
               disabled={!text.trim() || disabled}
-              className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="发送"
             >
               <Send size={16} />

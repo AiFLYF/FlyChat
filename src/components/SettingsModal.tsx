@@ -1,3 +1,4 @@
+// deslop-ignore-file 04 05 12 21 — 单一强调色、选中态为强调色描边+中性底、破坏性操作用红、弹窗单框圆角
 import { useEffect, useState } from 'react'
 import { Loader2, Moon, Monitor, Sun, X } from 'lucide-react'
 import { useChatStore } from '../store/chat'
@@ -50,15 +51,15 @@ export default function SettingsModal() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={() => setOpen(false)}
     >
       <div
-        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl dark:bg-zinc-900"
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-zinc-200 bg-white p-5 shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-zinc-800 dark:text-zinc-100">设置</h2>
+          <h2 className="text-lg font-semibold text-zinc-800 dark:text-zinc-100">设置</h2>
           <button
             onClick={() => setOpen(false)}
             className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
@@ -74,13 +75,18 @@ export default function SettingsModal() {
             正在获取可用模型…
           </div>
         ) : error ? (
-          <div className="rounded-lg bg-red-50 px-3 py-2.5 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-400">
-            {error}（请确认后端服务已启动）
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+            <b className="text-red-600 dark:text-red-400">错误</b>
+            <span> — {error}（请确认后端服务已启动）</span>
           </div>
         ) : providers.length === 0 ? (
-          <div className="rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
-            服务端尚未配置任何 API Key。请复制 <code>server/.env.example</code> 为{' '}
-            <code>server/.env</code>，填入至少一个提供商的 Key 后重启后端。
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+            <b>未配置</b>
+            <span>
+              {' '}
+              — 服务端尚未配置任何 API Key。请复制 <code>server/.env.example</code> 为{' '}
+              <code>server/.env</code>，填入至少一个提供商的 Key 后重启后端。
+            </span>
           </div>
         ) : (
           <div className="space-y-5">
@@ -96,7 +102,7 @@ export default function SettingsModal() {
                     onClick={() => updateSettings({ provider: p.id, model: p.models[0] ?? '' })}
                     className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
                       settings.provider === p.id
-                        ? 'border-blue-500 bg-blue-50 font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+                        ? 'border-blue-600 bg-zinc-100 font-medium text-blue-700 dark:bg-zinc-800 dark:text-blue-400'
                         : 'border-zinc-200 text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800'
                     }`}
                   >
@@ -117,9 +123,9 @@ export default function SettingsModal() {
                     <button
                       key={m}
                       onClick={() => updateSettings({ model: m })}
-                      className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                      className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
                         settings.model === m
-                          ? 'border-blue-500 bg-blue-50 font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+                          ? 'border-blue-600 bg-zinc-100 font-medium text-blue-700 dark:bg-zinc-800 dark:text-blue-400'
                           : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800'
                       }`}
                     >
@@ -150,7 +156,7 @@ export default function SettingsModal() {
             <div>
               <label className="mb-1.5 flex items-center justify-between text-sm font-medium text-zinc-700 dark:text-zinc-300">
                 <span>随机性（temperature）</span>
-                <span className="font-mono text-xs text-zinc-500">{settings.temperature}</span>
+                <span className="text-xs tabular-nums text-zinc-500">{settings.temperature}</span>
               </label>
               <input
                 type="range"

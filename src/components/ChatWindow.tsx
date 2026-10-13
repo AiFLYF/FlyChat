@@ -1,3 +1,4 @@
+// deslop-ignore-file 04 12 21 — 单一强调色；紧凑应用栏的标题层级；空态图标底板
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Download, PanelLeftOpen, Settings } from 'lucide-react'
 import { useChatStore, uid } from '../store/chat'
@@ -102,7 +103,7 @@ export default function ChatWindow() {
           const message = err instanceof Error ? err.message : String(err)
           updateMessage(conversationId, assistantId, {
             content: partial
-              ? partial + '\n\n---\n⚠️ 生成中断：' + message
+              ? partial + '\n\n---\n生成中断：' + message
               : '请求失败：' + message,
             error: !partial,
           })
@@ -189,7 +190,7 @@ export default function ChatWindow() {
               <PanelLeftOpen size={17} />
             </button>
           )}
-          <h1 className="max-w-[50vw] truncate text-sm font-medium text-zinc-700 dark:text-zinc-200">
+          <h1 className="max-w-[50vw] truncate text-base font-medium text-zinc-800 dark:text-zinc-100">
             {active?.title ?? 'FlyChat'}
           </h1>
         </div>
@@ -208,7 +209,7 @@ export default function ChatWindow() {
       <main ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
         {empty ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 px-6">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/20">
+            <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-blue-600 text-white">
               <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor">
                 <path d="M13 2 3 14h7l-1 8 12-14h-8l0-6z" />
               </svg>
