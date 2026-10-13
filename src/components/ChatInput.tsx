@@ -1,6 +1,7 @@
-// deslop-ignore-file 04 21 — 单一强调色；外框 16px 内件 8px，符合 outer − padding 的嵌套规则
-import { useRef, useState } from 'react'
-import { Send, StopCircle } from 'lucide-react'
+// deslop-ignore-file 04 21 — 全站仅一个强调色（蓝）；外框 16px 内件 8px 符合嵌套规则
+import { useEffect, useRef } from 'react'
+import { ArrowUp, Square } from 'lucide-react'
+import { useComposer } from '../store/composer'
 
 interface Props {
   onSend: (text: string) => void
@@ -11,69 +12,97 @@ interface Props {
 }
 
 export default function ChatInput({ onSend, onStop, streaming, disabled, disabledHint }: Props) {
-  const [text, setText] = useState('')
+  const text = useComposer((s) => s.text)
+  const setText = useComposer((s) => s.setText)
+  const clear = useComposer((s) => s.clear)
+  const focusToken = useComposer((s) => s.focusToken)
   const ref = useRef<HTMLTextAreaElement>(null)
+
+  // 高度跟随内容
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 208) + 'px'
+  }, [text])
+
+  // 外部填充（示例提示词）或快捷键聚焦
+  useEffect(() => {
+    if (focusToken > 0) ref.current?.focus()
+  }, [focusToken])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        ref.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   const submit = () => {
     const value = text.trim()
     if (!value || streaming || disabled) return
     onSend(value)
-    setText('')
-    if (ref.current) ref.current.style.height = 'auto'
+    clear()
   }
 
+  const canSend = !!text.trim() && !streaming && !disabled
+
   return (
-    <div className="border-t border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="mx-auto max-w-3xl">
+    <div className="border-t border-rule bg-canvas px-4 pb-4 pt-3">
+      <div className="mx-auto w-full max-w-3xl">
         <div
-          className={`flex items-end gap-2 rounded-2xl border bg-white p-2 transition-colors dark:bg-zinc-800 ${
+          className={`r-lg flex items-end gap-2 border bg-raised p-2 transition-colors ${
             disabled
-              ? 'border-zinc-200 dark:border-zinc-700/60'
-              : 'border-zinc-200 focus-within:border-blue-400 dark:border-zinc-700 dark:focus-within:border-blue-500'
+              ? 'border-rule'
+              : 'border-rule focus-within:border-accent'
           }`}
         >
           <textarea
             ref={ref}
             value={text}
             rows={1}
-            placeholder={disabled ? disabledHint ?? '暂不可用' : '输入消息，Enter 发送，Shift + Enter 换行'}
+            placeholder={
+              disabled ? disabledHint ?? '暂不可用' : '输入消息，Enter 发送，Shift + Enter 换行'
+            }
             disabled={disabled}
-            onChange={(e) => {
-              setText(e.target.value)
-              // 自动增高
-              e.target.style.height = 'auto'
-              e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px'
-            }}
+            onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
                 submit()
               }
             }}
-            className="max-h-[200px] min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] leading-6 text-zinc-800 outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed dark:text-zinc-100 dark:placeholder:text-zinc-500"
+            className="max-h-52 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] leading-6 text-ink-1 outline-none placeholder:text-ink-3 disabled:cursor-not-allowed"
           />
           {streaming ? (
             <button
               onClick={onStop}
-              className="flex h-9 items-center gap-1.5 rounded-lg bg-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-600"
+              className="r-sm flex h-9 items-center gap-1.5 border border-rule px-3 text-sm font-medium text-ink-2 transition-colors hover-bg-hover"
             >
-              <StopCircle size={16} />
+              <Square size={13} fill="currentColor" />
               停止
             </button>
           ) : (
             <button
               onClick={submit}
-              disabled={!text.trim() || disabled}
-              className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={!canSend}
+              className="r-sm flex h-9 w-9 items-center justify-center bg-accent text-on-accent transition-opacity disabled:opacity-25"
               aria-label="发送"
             >
-              <Send size={16} />
+              <ArrowUp size={17} />
             </button>
           )}
         </div>
-        <p className="mt-2 text-center text-xs text-zinc-400 dark:text-zinc-500">
-          内容由 AI 生成，请注意甄别准确性
-        </p>
+        <div className="mt-2 flex items-center justify-between px-1 text-xs text-ink-3">
+          <span>内容由 AI 生成，请自行甄别</span>
+          <span className="hidden sm:block">
+            <kbd className="rounded border border-rule px-1.5 py-0.5 font-sans">⌘K</kbd> 聚焦输入
+          </span>
+        </div>
       </div>
     </div>
   )
