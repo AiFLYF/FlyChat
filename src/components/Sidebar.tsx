@@ -9,7 +9,6 @@ import {
   Folder,
   FolderPlus,
   MessageSquare,
-  MoreVertical,
   Pencil,
   Pin,
   PinOff,
@@ -152,7 +151,10 @@ function ConversationItem({
       <MessageSquare size={14} className="shrink-0 text-ink-3" />
       <span className="min-w-0 flex-1 truncate">{conv.title}</span>
 
-      {/* 收藏常驻微星标 */}
+      {/* 常驻指示徽标 */}
+      {conv.pinned && (
+        <Pin size={11} className="shrink-0 text-ink-3 rotate-45" />
+      )}
       {conv.starred && (
         <Star size={11} className="shrink-0 fill-amber-400 text-amber-500" />
       )}
@@ -165,8 +167,9 @@ function ConversationItem({
             e.stopPropagation()
             toggleConversationStar(conv.id)
           }}
-          className={`${ICON_BTN_SM} ${conv.starred ? 'text-amber-500' : ''}`}
+          className={`${ICON_BTN_SM} ${conv.starred ? 'text-amber-500' : 'hover:text-amber-500'}`}
           aria-label={conv.starred ? '取消收藏' : '收藏'}
+          title={conv.starred ? '取消收藏' : '收藏'}
         >
           <Star size={12} className={conv.starred ? 'fill-amber-400' : ''} />
         </button>
@@ -179,6 +182,7 @@ function ConversationItem({
           }}
           className={ICON_BTN_SM}
           aria-label={conv.pinned ? '取消置顶' : '置顶'}
+          title={conv.pinned ? '取消置顶' : '置顶'}
         >
           {conv.pinned ? <PinOff size={12} /> : <Pin size={12} />}
         </button>
@@ -192,65 +196,74 @@ function ConversationItem({
           }}
           className={ICON_BTN_SM}
           aria-label="重命名"
+          title="重命名"
         >
           <Pencil size={12} />
         </button>
 
-        {/* 更多菜单（移入文件夹等） */}
-        <div className="relative" ref={menuRef}>
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              setMenuOpen((v) => !v)
-            }}
-            className={ICON_BTN_SM}
-            aria-label="更多操作"
-          >
-            <MoreVertical size={12} />
-          </button>
-          <MenuPanel open={menuOpen} position="absolute right-0 top-6 z-30 w-40" origin="top-right" label="操作选项">
-            {folders.length > 0 && (
-              <>
-                <p className="px-2.5 py-1 text-[10px] font-semibold text-ink-3 uppercase tracking-wider">移动至文件夹</p>
-                {conv.folderId && (
-                  <MenuItem
-                    icon={<X size={12} />}
-                    onClick={() => {
-                      moveConversationToFolder(conv.id, null)
-                      setMenuOpen(false)
-                    }}
-                  >
-                    <span>移出文件夹</span>
-                  </MenuItem>
-                )}
-                {folders.map((f) => (
-                  <MenuItem
-                    key={f.id}
-                    icon={<span>{f.emoji || '📁'}</span>}
-                    className={conv.folderId === f.id ? 'font-semibold text-accent bg-accent/10' : ''}
-                    onClick={() => {
-                      moveConversationToFolder(conv.id, f.id)
-                      setMenuOpen(false)
-                    }}
-                  >
-                    <span className="truncate">{f.name}</span>
-                  </MenuItem>
-                ))}
-                <div className="my-1 border-t border-rule" />
-              </>
-            )}
-            <MenuItem
-              icon={<Trash2 size={12} className="text-danger" />}
-              className="text-danger hover:bg-danger/10"
-              onClick={() => {
-                onDelete(conv.id)
-                setMenuOpen(false)
+        {/* 移至文件夹（仅在已建文件夹时出现） */}
+        {folders.length > 0 && (
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setMenuOpen((v) => !v)
               }}
+              className={`${ICON_BTN_SM} ${conv.folderId ? 'text-accent' : ''}`}
+              aria-label="移动到文件夹"
+              title="移动到文件夹"
             >
-              <span>删除对话</span>
-            </MenuItem>
-          </MenuPanel>
-        </div>
+              <Folder size={12} />
+            </button>
+            <MenuPanel
+              open={menuOpen}
+              position="absolute right-0 top-7 z-50 w-44"
+              origin="top-right"
+              label="选择文件夹"
+            >
+              <p className="px-2.5 py-1 text-[10px] font-semibold text-ink-3 uppercase tracking-wider">
+                移动至文件夹
+              </p>
+              {conv.folderId && (
+                <MenuItem
+                  icon={<X size={12} />}
+                  onClick={() => {
+                    moveConversationToFolder(conv.id, null)
+                    setMenuOpen(false)
+                  }}
+                >
+                  <span>移出文件夹</span>
+                </MenuItem>
+              )}
+              {folders.map((f) => (
+                <MenuItem
+                  key={f.id}
+                  icon={<span>{f.emoji || '📁'}</span>}
+                  className={conv.folderId === f.id ? 'font-semibold text-accent bg-accent/10' : ''}
+                  onClick={() => {
+                    moveConversationToFolder(conv.id, f.id)
+                    setMenuOpen(false)
+                  }}
+                >
+                  <span className="truncate">{f.name}</span>
+                </MenuItem>
+              ))}
+            </MenuPanel>
+          </div>
+        )}
+
+        {/* 一键直接删除：流畅撤销提示，不再弹窗遮挡列表 */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete(conv.id)
+          }}
+          className={`${ICON_BTN_SM} hover:text-danger`}
+          aria-label="删除"
+          title="删除"
+        >
+          <Trash2 size={12} />
+        </button>
       </span>
     </div>
   )
