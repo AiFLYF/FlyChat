@@ -85,7 +85,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       // 对其中仍处于 pending/processing 的文档发起自动轮询
       for (const doc of res.items || []) {
         if ((doc.status === 'pending' || doc.status === 'processing') && !activePolls.has(doc.id)) {
-          pollDocStatus(doc.id, set, get)
+          pollDocStatus(doc.id, set)
         }
       }
     } catch {
