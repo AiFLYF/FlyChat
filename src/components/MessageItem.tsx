@@ -73,9 +73,11 @@ function IconButton({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className={`${ICON_BTN} h-7 gap-1 px-2 text-[11px] ${
-        danger ? 'hover:text-danger' : ''
-      } ${active ? 'bg-accent-soft text-accent font-medium' : ''}`}
+      className={`${ICON_BTN} press h-7 gap-1 rounded-lg px-2 text-[11px] transition-all duration-150 ${
+        danger
+          ? 'hover:bg-danger/10 hover:text-danger'
+          : 'hover:bg-hover'
+      } ${active ? 'bg-accent-soft text-accent font-medium shadow-xs' : ''}`}
     >
       {children}
     </button>
@@ -198,7 +200,7 @@ const MessageItem = memo(function MessageItem({
                   setEditing(false)
                   setDraft(message.content)
                 }}
-                className={`${BUTTON_GHOST} py-1 text-xs`}
+                className={`${BUTTON_GHOST} press py-1 text-xs`}
               >
                 <X size={13} />
                 取消
@@ -209,7 +211,7 @@ const MessageItem = memo(function MessageItem({
                   if (next) onEdit?.(message.id, next)
                   setEditing(false)
                 }}
-                className={`${BUTTON_PRIMARY} py-1 text-xs`}
+                className={`${BUTTON_PRIMARY} press hover-lift py-1 text-xs`}
               >
                 <Check size={13} />
                 保存并重新发送
@@ -496,18 +498,40 @@ const MessageItem = memo(function MessageItem({
             <IconButton
               label="回答满意"
               active={feedback === 'like'}
-              onClick={() => setFeedback(feedback === 'like' ? null : 'like')}
+              onClick={() => {
+                const next = feedback === 'like' ? null : 'like'
+                setFeedback(next)
+                if (next) showToast('感谢您的反馈！', 'success')
+              }}
             >
-              <ThumbsUp size={13} className={feedback === 'like' ? 'fill-current' : ''} />
+              <ThumbsUp
+                size={13}
+                className={
+                  feedback === 'like'
+                    ? 'fill-emerald-500 text-emerald-500 anim-bounce'
+                    : 'transition-transform hover:scale-110'
+                }
+              />
             </IconButton>
 
             {/* 点踩反馈 */}
             <IconButton
               label="回答有待改进"
               active={feedback === 'dislike'}
-              onClick={() => setFeedback(feedback === 'dislike' ? null : 'dislike')}
+              onClick={() => {
+                const next = feedback === 'dislike' ? null : 'dislike'
+                setFeedback(next)
+                if (next) showToast('已记录反馈，我们将持续优化', 'info')
+              }}
             >
-              <ThumbsDown size={13} className={feedback === 'dislike' ? 'fill-current' : ''} />
+              <ThumbsDown
+                size={13}
+                className={
+                  feedback === 'dislike'
+                    ? 'fill-danger text-danger anim-bounce'
+                    : 'transition-transform hover:scale-110'
+                }
+              />
             </IconButton>
 
             {/* 生成社交分享卡片 */}

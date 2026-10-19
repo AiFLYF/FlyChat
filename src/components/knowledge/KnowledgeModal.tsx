@@ -219,7 +219,7 @@ export default function KnowledgeModal() {
             <div className="flex rounded-lg bg-hover p-0.5 text-xs">
               <button
                 onClick={() => setActiveTab('documents')}
-                className={`flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-all ${
+                className={`press flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-all ${
                   activeTab === 'documents'
                     ? 'bg-panel text-ink-1 shadow-sm'
                     : 'text-ink-3 hover:text-ink-1'
@@ -230,7 +230,7 @@ export default function KnowledgeModal() {
               </button>
               <button
                 onClick={() => setActiveTab('diagnostics')}
-                className={`flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-all ${
+                className={`press flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-all ${
                   activeTab === 'diagnostics'
                     ? 'bg-panel text-accent shadow-sm'
                     : 'text-ink-3 hover:text-ink-1'
@@ -411,10 +411,10 @@ export default function KnowledgeModal() {
                   handleFiles(e.dataTransfer.files)
                 }}
                 onClick={() => fileInputRef.current?.click()}
-                className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-4 text-center cursor-pointer transition-colors ${
+                className={`press hover-lift flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-4 text-center cursor-pointer transition-all duration-200 ${
                   dragOver
-                    ? 'border-accent bg-accent/5'
-                    : 'border-rule hover:border-accent/50 hover:bg-hover-soft'
+                    ? 'border-accent bg-accent/10 scale-[1.01] shadow-sm'
+                    : 'border-rule hover:border-accent/60 hover:bg-hover-soft'
                 }`}
               >
                 <input
@@ -758,7 +758,7 @@ export default function KnowledgeModal() {
                             </div>
                             <div className="h-1.5 w-full rounded-full bg-rule overflow-hidden">
                               <div
-                                className="h-full bg-blue-500 rounded-full"
+                                className="h-full bg-blue-500 rounded-full transition-all duration-500 ease-out"
                                 style={{ width: `${Math.min(cand.vectorScore * 100, 100)}%` }}
                               />
                             </div>
@@ -770,7 +770,7 @@ export default function KnowledgeModal() {
                             </div>
                             <div className="h-1.5 w-full rounded-full bg-rule overflow-hidden">
                               <div
-                                className="h-full bg-emerald-500 rounded-full"
+                                className="h-full bg-emerald-500 rounded-full transition-all duration-500 ease-out"
                                 style={{ width: `${Math.min(cand.keywordScore * 100, 100)}%` }}
                               />
                             </div>
@@ -782,7 +782,7 @@ export default function KnowledgeModal() {
                             </div>
                             <div className="h-1.5 w-full rounded-full bg-rule overflow-hidden">
                               <div
-                                className="h-full bg-amber-500 rounded-full"
+                                className="h-full bg-amber-500 rounded-full transition-all duration-500 ease-out"
                                 style={{ width: `${Math.min(cand.phraseScore * 100, 100)}%` }}
                               />
                             </div>
@@ -794,7 +794,7 @@ export default function KnowledgeModal() {
                             </div>
                             <div className="h-1.5 w-full rounded-full bg-rule overflow-hidden">
                               <div
-                                className="h-full bg-purple-500 rounded-full"
+                                className="h-full bg-purple-500 rounded-full transition-all duration-500 ease-out"
                                 style={{ width: `${Math.min(cand.headingScore * 100, 100)}%` }}
                               />
                             </div>

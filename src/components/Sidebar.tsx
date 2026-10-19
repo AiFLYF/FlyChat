@@ -772,7 +772,7 @@ export default function Sidebar({ open }: { open: boolean }) {
         {/* 智能体市场入口 */}
         <button
           onClick={() => setMarketOpen(true)}
-          className="group flex w-full items-center justify-between rounded-lg border border-rule/70 bg-gradient-to-r from-accent/8 via-hover to-panel px-2.5 py-1.5 text-[12px] font-medium text-ink-1 transition-ui hover:border-accent/40 hover:bg-hover hover:shadow-1"
+          className="group press hover-lift flex w-full items-center justify-between rounded-lg border border-rule/70 bg-gradient-to-r from-accent/8 via-hover to-panel px-2.5 py-1.5 text-[12px] font-medium text-ink-1 transition-ui hover:border-accent/40 hover:bg-hover hover:shadow-1"
         >
           <div className="flex items-center gap-1.5">
             <Sparkles size={13} className="text-accent transition-transform duration-200 group-hover:scale-110" />
@@ -791,7 +791,7 @@ export default function Sidebar({ open }: { open: boolean }) {
         </span>
         <button
           onClick={() => setIsCreatingFolder(true)}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] hover:bg-hover hover:text-ink-1 transition-ui"
+          className="press flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] hover:bg-hover hover:text-ink-1 transition-ui"
           title="新建文件夹"
         >
           <FolderPlus size={13} />
@@ -801,7 +801,7 @@ export default function Sidebar({ open }: { open: boolean }) {
 
       {/* 新建文件夹输入框 */}
       {isCreatingFolder && (
-        <div className="mx-3 mb-2 flex items-center gap-1 rounded-lg border border-accent/40 bg-hover px-2 py-1.5">
+        <div className="mx-3 mb-2 flex items-center gap-1 rounded-lg border border-accent/40 bg-hover px-2 py-1.5 anim-fade-up shadow-sm">
           <Folder size={14} className="text-accent shrink-0" />
           <input
             autoFocus
@@ -814,10 +814,10 @@ export default function Sidebar({ open }: { open: boolean }) {
             placeholder="文件夹名称..."
             className="min-w-0 flex-1 bg-transparent text-[12px] text-ink-1 outline-none"
           />
-          <button onClick={handleCommitNewFolder} className={ICON_BTN_SM}>
+          <button onClick={handleCommitNewFolder} className={`${ICON_BTN_SM} press`}>
             <Check size={13} />
           </button>
-          <button onClick={() => setIsCreatingFolder(false)} className={ICON_BTN_SM}>
+          <button onClick={() => setIsCreatingFolder(false)} className={`${ICON_BTN_SM} press`}>
             <X size={13} />
           </button>
         </div>
@@ -878,11 +878,12 @@ export default function Sidebar({ open }: { open: boolean }) {
                   onClick={() => toggleFolderExpanded(folder.id)}
                   className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[12px] font-medium"
                 >
-                  {isExpanded ? (
-                    <ChevronDown size={13} className="shrink-0 text-ink-3" />
-                  ) : (
-                    <ChevronRight size={13} className="shrink-0 text-ink-3" />
-                  )}
+                  <ChevronRight
+                    size={13}
+                    className={`shrink-0 text-ink-3 transition-transform duration-200 ease-out ${
+                      isExpanded ? 'rotate-90' : ''
+                    }`}
+                  />
                   <span className="shrink-0 text-sm leading-none">{folder.emoji || '📁'}</span>
                   {isEditing ? (
                     <input

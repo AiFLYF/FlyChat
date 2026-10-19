@@ -357,10 +357,10 @@ export default function SettingsModal() {
             key={t.id}
             type="button"
             onClick={() => setTab(t.id as any)}
-            className={`px-3 py-2 border-b-2 transition-colors whitespace-nowrap ${
+            className={`press px-3.5 py-2 border-b-2 text-xs sm:text-[13px] font-medium transition-all duration-150 whitespace-nowrap rounded-t-md ${
               tab === t.id
-                ? 'border-accent text-accent font-semibold'
-                : 'border-transparent text-ink-3 hover:text-ink-1'
+                ? 'border-accent text-accent bg-accent-soft/40 font-semibold'
+                : 'border-transparent text-ink-3 hover:text-ink-1 hover:bg-hover/50'
             }`}
           >
             {t.label}
@@ -368,7 +368,7 @@ export default function SettingsModal() {
         ))}
       </div>
 
-      <div className="anim-fade-up space-y-5" style={{ animationDelay: '80ms' }}>
+      <div key={tab} className="anim-fade-in space-y-5">
         {tab === 'general' && (
           <>
             {/* 本地生成参数始终可用；模型提供商/模型选择依赖后端，下方独立处理加载与错误，不再阻塞其它本地设置 */}
