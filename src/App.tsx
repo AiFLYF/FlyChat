@@ -8,6 +8,11 @@ import CommandPalette from './components/CommandPalette'
 import SharedView from './components/SharedView'
 import ArtifactWorkspace from './components/artifacts/ArtifactWorkspace'
 import AssistantMarketModal from './components/AssistantMarketModal'
+import AuthModal from './components/auth/AuthModal'
+import UserManagementModal from './components/auth/UserManagementModal'
+import PresetModal from './components/presets/PresetModal'
+import KnowledgeModal from './components/knowledge/KnowledgeModal'
+import { useAuthStore } from './store/auth'
 import { useChatStore } from './store/chat'
 import { useComposer } from './store/composer'
 import {
@@ -63,6 +68,11 @@ export default function App() {
   useEffect(() => {
     bgRef.current?.toggleAttribute('inert', settingsOpen || shortcutsOpen || usageOpen || commandOpen || marketOpen)
   }, [settingsOpen, shortcutsOpen, usageOpen, commandOpen, marketOpen])
+
+  // 初始化鉴权状态（单用户模式静默跳过，多用户模式检查登录或初始化引导）
+  useEffect(() => {
+    void useAuthStore.getState().checkAuth()
+  }, [])
 
   // 应用主题（浅色 / 深色 / 跟随系统）
   const prevDark = useRef<boolean | null>(null)
@@ -206,6 +216,10 @@ export default function App() {
         onOpenUsage={() => setUsageOpen(true)}
       />
       <AssistantMarketModal open={marketOpen} onClose={() => setMarketOpen(false)} />
+      <AuthModal />
+      <UserManagementModal />
+      <PresetModal />
+      <KnowledgeModal />
       {boot.mounted && (
         <div
           className={`absolute inset-0 z-50 ${

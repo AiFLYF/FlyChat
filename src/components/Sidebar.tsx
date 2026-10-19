@@ -20,8 +20,14 @@ import {
   Trash2,
   Undo2,
   X,
+  BookOpen,
+  LogOut,
+  Shield,
+  User,
 } from 'lucide-react'
 import { useChatStore } from '../store/chat'
+import { useAuthStore } from '../store/auth'
+import { useKnowledgeStore } from '../store/knowledge'
 import { useCommandPaletteOpen, useMarketOpen, useSettingsOpen, useUsageOpen } from './openPanels'
 import { BrandLogo } from './ui/BrandLogo'
 import { staggerDelay } from '../lib/motion'
@@ -287,6 +293,17 @@ export default function Sidebar({ open }: { open: boolean }) {
   const setShowUsage = useUsageOpen((s) => s.setOpen)
   const setShowCommand = useCommandPaletteOpen((s) => s.setOpen)
   const setMarketOpen = useMarketOpen((s) => s.setOpen)
+
+  const authConfig = useAuthStore((s) => s.config)
+  const user = useAuthStore((s) => s.user)
+  const logout = useAuthStore((s) => s.logout)
+  const setAuthModalOpen = useAuthStore((s) => s.setModalOpen)
+  const setUserManagementOpen = useAuthStore((s) => s.setUserManagementOpen)
+  const setKnowledgeModalOpen = useKnowledgeStore((s) => s.setModalOpen)
+
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const userMenuRef = useRef<HTMLDivElement>(null)
+  useDismiss(userMenuRef, () => setUserMenuOpen(false), userMenuOpen)
 
   const [query, setQuery] = useState('')
   const [assistantOpen, setAssistantOpen] = useState(false)
@@ -781,12 +798,88 @@ export default function Sidebar({ open }: { open: boolean }) {
           <span>用量分析</span>
         </button>
         <button
+          onClick={() => setKnowledgeModalOpen(true)}
+          className="group flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] text-ink-2 transition-ui hover:bg-hover hover:text-ink-1"
+        >
+          <BookOpen size={15} className="text-ink-3 group-hover:text-accent" />
+          <span>知识库 (RAG)</span>
+        </button>
+        <button
           onClick={() => setShowSettings(true)}
           className="group flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] text-ink-2 transition-ui hover:bg-hover hover:text-ink-1"
         >
           <Settings size={15} className="transition-transform duration-200 group-hover:rotate-90" />
           <span>设置</span>
         </button>
+
+        {/* 多用户模式登录态与管理入口 */}
+        {authConfig?.authMode === 'multi' && (
+          <div className="pt-1.5 border-t border-rule/50 mt-1">
+            {user ? (
+              <div className="relative" ref={userMenuRef}>
+                <button
+                  onClick={() => setUserMenuOpen((v) => !v)}
+                  className="flex w-full items-center justify-between rounded-lg p-1.5 text-left transition-ui hover:bg-hover"
+                  aria-label="用户账户菜单"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xs font-semibold text-accent">
+                      {user.displayName?.[0] || user.username[0].toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium text-ink-1">
+                        {user.displayName || user.username}
+                      </p>
+                      <span className="inline-flex items-center gap-0.5 text-[10px] text-ink-3">
+                        {user.role === 'admin' ? (
+                          <span className="text-amber-500 font-medium">管理员</span>
+                        ) : (
+                          <span>成员</span>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                  <ChevronDown size={13} className="text-ink-4 shrink-0" />
+                </button>
+
+                {userMenuOpen && (
+                  <div className="absolute bottom-full left-0 mb-1 w-full rounded-xl border border-rule bg-panel p-1 shadow-3 anim-fade-up z-40 text-xs">
+                    {user.role === 'admin' && (
+                      <button
+                        onClick={() => {
+                          setUserMenuOpen(false)
+                          setUserManagementOpen(true)
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-ink-2 hover:bg-hover hover:text-ink-1"
+                      >
+                        <Shield size={13} className="text-amber-500" />
+                        <span>用户管理</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        setUserMenuOpen(false)
+                        void logout()
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-danger hover:bg-hover"
+                    >
+                      <LogOut size={13} />
+                      <span>退出登录</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={() => setAuthModalOpen(true)}
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-rule bg-panel py-1.5 text-xs font-medium text-accent hover:bg-accent-soft transition-ui"
+              >
+                <User size={13} />
+                <span>登录 / 注册</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </aside>
   )

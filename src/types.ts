@@ -44,6 +44,9 @@ export interface MessageVariant {
   createdAt: number
   model?: string
   citations?: Citation[]
+  sources?: KnowledgeSource[]
+  toolCalls?: ToolCall[]
+  toolResults?: ToolResult[]
   usage?: TokenUsage
 }
 
@@ -70,6 +73,16 @@ export interface Message {
   attachments?: Attachment[]
   /** 联网搜索引用 */
   citations?: Citation[]
+  /** 知识库 RAG 引用来源 */
+  sources?: KnowledgeSource[]
+  /** 工具调用 */
+  toolCalls?: ToolCall[]
+  /** 工具调用结果 */
+  toolResults?: ToolResult[]
+  /** 模型故障自动降级切换记录 */
+  modelSwitch?: { from: string; to: string; reason?: string }
+  /** 树形结构父节点 ID */
+  parentId?: string
   /** 同一轮多模型对比分组标识 */
   groupId?: string
   /** token 用量 */
@@ -81,6 +94,7 @@ export interface Message {
     compressed?: boolean
     latencyMs?: number
     contextWindow?: number
+    preset?: { id: string; name: string; icon?: string }
   }
 }
 
@@ -260,3 +274,180 @@ export interface CustomProviderInput {
   apiKey?: string
   models: string[]
 }
+
+/* =========================================================================
+   多用户与认证系统 (Multi-User & Auth)
+   ========================================================================= */
+
+export type UserRole = 'admin' | 'user'
+
+export interface AuthUser {
+  id: string
+  username: string
+  displayName?: string
+  role: UserRole
+  disabled?: boolean
+  lastLoginAt?: number
+  createdAt?: number
+}
+
+export interface AuthConfig {
+  authMode: 'single' | 'multi'
+  needsSetup: boolean
+  authRequired: boolean
+  features?: {
+    tools?: boolean
+    knowledge?: boolean
+    mcp?: boolean
+    presets?: boolean
+    [key: string]: boolean | undefined
+  }
+}
+
+export interface AuthMeResponse {
+  multiUser: boolean
+  needsSetup: boolean
+  user: AuthUser | null
+}
+
+/* =========================================================================
+   预设中心 (Presets)
+   ========================================================================= */
+
+export interface PresetParams {
+  temperature?: number
+  topP?: number
+  maxTokens?: number
+  think?: boolean
+  webSearch?: boolean
+  agent?: boolean
+  tools?: boolean | string[]
+  topK?: number
+  mcpMode?: 'all' | 'selected'
+}
+
+export interface Preset {
+  id: string
+  name: string
+  description?: string
+  icon?: string
+  provider?: string
+  model?: string
+  systemPrompt?: string
+  params?: PresetParams
+  workspaceId?: string
+  mcpServers?: string[]
+  sortIndex?: number
+  createdAt?: number
+  updatedAt?: number
+}
+
+/* =========================================================================
+   MCP 协议客户端 (Model Context Protocol)
+   ========================================================================= */
+
+export type McpTransport = 'stdio' | 'http'
+
+export interface McpTool {
+  name: string
+  description?: string
+  inputSchema?: unknown
+  readOnly?: boolean
+  disabled?: boolean
+}
+
+export interface McpServer {
+  id: string
+  name: string
+  transport: McpTransport
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  baseUrl?: string
+  headers?: Record<string, string>
+  enabled: boolean
+  trusted: boolean
+  toolCount?: number
+  tools?: McpTool[]
+  lastError?: string
+  createdAt?: number
+  updatedAt?: number
+}
+
+/* =========================================================================
+   知识库 RAG 与异步文档上传
+   ========================================================================= */
+
+export interface KnowledgeStatus {
+  documents: number
+  chunks: number
+  processing: number
+  failed: number
+  pending: number
+  workspaces: number
+  enabled: boolean
+  embedding?: { provider: string; name: string; model: string }
+}
+
+export interface WorkspaceItem {
+  id: string
+  name: string
+  docCount: number
+  chunkCount: number
+}
+
+export type DocumentStage =
+  | '已入队'
+  | '解析文件'
+  | '切块'
+  | '向量化'
+  | '写入数据库'
+  | '已完成'
+  | '失败'
+  | '中断'
+  | string
+
+export interface DocumentItem {
+  id: string
+  workspaceId: string
+  name: string
+  mime?: string
+  size?: number
+  chars?: number
+  chunkCount?: number
+  status: 'pending' | 'processing' | 'ready' | 'failed'
+  stage: DocumentStage
+  progress: number
+  attempts: number
+  error?: string
+  createdAt?: number
+  updatedAt?: number
+}
+
+export interface KnowledgeSource {
+  index: number
+  title: string
+  documentId: string
+  documentName: string
+  heading?: string
+  snippet: string
+  score?: number
+}
+
+/* =========================================================================
+   Agent 工具调用 (Tool Calling)
+   ========================================================================= */
+
+export interface ToolCall {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+}
+
+export interface ToolResult {
+  id: string
+  name: string
+  ok: boolean
+  preview?: string
+}
+

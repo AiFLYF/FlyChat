@@ -77,6 +77,8 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'system' as ThemeMode,
   webSearch: false,
   thinking: false,
+  tools: true,
+  workspaceId: '',
   usingContext: true,
 }
 

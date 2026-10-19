@@ -32,7 +32,10 @@ import { MenuPanel, MenuItem } from './ui/Menu'
 import MessageItem from './MessageItem'
 import Composer from './Composer'
 import ModelSelector from './ModelSelector'
+import PresetSelector from './presets/PresetSelector'
 import ShareCardModal from './ShareCardModal'
+import { usePresetStore } from '../store/preset'
+import { useKnowledgeStore } from '../store/knowledge'
 import { BrandIcon } from './ui/BrandLogo'
 import { ConstellationHero } from './ui/BrandGraphic'
 import type { Attachment, Conversation, Message, MessageVariant, ProviderInfo } from '../types'
@@ -298,6 +301,9 @@ export default function ChatWindow() {
       abortRef.current.push(controller)
 
       try {
+        const activePreset = usePresetStore.getState().presets.find((p) => p.id === usePresetStore.getState().activePresetId)
+        const activeWorkspaceId = useKnowledgeStore.getState().activeWorkspaceId || activePreset?.workspaceId
+
         await streamChat(
           {
             settings: {
@@ -310,9 +316,39 @@ export default function ChatWindow() {
             messages: history,
             webSearch: settings.webSearch,
             thinking: settings.thinking,
+            tools: settings.tools !== false,
+            presetId: activePreset?.id,
+            workspaceId: activeWorkspaceId,
+            conversationId,
             onDelta: (text) => appendToMessage(conversationId, assistantId, text),
             onReasoning: (text) => appendReasoning(conversationId, assistantId, text),
             onCitations: (citations) => updateMessage(conversationId, assistantId, { citations }),
+            onSources: (sources) => updateMessage(conversationId, assistantId, { sources }),
+            onToolCall: (tc) => {
+              const currentMsg = useChatStore
+                .getState()
+                .conversations.find((c) => c.id === conversationId)
+                ?.messages.find((m) => m.id === assistantId)
+              const existing = currentMsg?.toolCalls || []
+              const idx = existing.findIndex((x) => x.id === tc.id)
+              const updated = idx >= 0
+                ? existing.map((x, i) => (i === idx ? { ...x, ...tc } : x))
+                : [...existing, tc]
+              updateMessage(conversationId, assistantId, { toolCalls: updated })
+            },
+            onToolResult: (tr) => {
+              const currentMsg = useChatStore
+                .getState()
+                .conversations.find((c) => c.id === conversationId)
+                ?.messages.find((m) => m.id === assistantId)
+              const existing = currentMsg?.toolResults || []
+              const idx = existing.findIndex((x) => x.id === tr.id)
+              const updated = idx >= 0
+                ? existing.map((x, i) => (i === idx ? { ...x, ...tr } : x))
+                : [...existing, tr]
+              updateMessage(conversationId, assistantId, { toolResults: updated })
+            },
+            onModelSwitch: (modelSwitch) => updateMessage(conversationId, assistantId, { modelSwitch }),
             onUsage: (usage) => updateMessage(conversationId, assistantId, { usage }),
             onNotice: (message) => setNotice(message),
             onMeta: (meta) => updateMessage(conversationId, assistantId, { meta }),
@@ -325,7 +361,7 @@ export default function ChatWindow() {
           .conversations.find((c) => c.id === conversationId)
           ?.messages.find((m) => m.id === assistantId)
         const currentVariants = finishedMsg?.variants ? [...finishedMsg.variants] : []
-        if (finishedMsg && finishedMsg.content) {
+        if (finishedMsg && (finishedMsg.content || finishedMsg.toolCalls?.length)) {
           currentVariants.push({
             id: 'v-' + Date.now(),
             content: finishedMsg.content,
@@ -333,6 +369,10 @@ export default function ChatWindow() {
             reasoningTimeMs: durationMs,
             model: target.model,
             citations: finishedMsg.citations,
+            sources: finishedMsg.sources,
+            toolCalls: finishedMsg.toolCalls,
+            toolResults: finishedMsg.toolResults,
+            modelSwitch: finishedMsg.modelSwitch,
             usage: finishedMsg.usage,
             createdAt: Date.now(),
           })
@@ -584,10 +624,13 @@ export default function ChatWindow() {
 
   const heroFooter = (
     <>
-      {/* flex-wrap：窄屏放不下时状态 chips 换行，而不是把模型选择器挤到溢出 */}
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 px-2">
-        <ModelSelector providers={providers} />
+        <div className="flex items-center gap-2">
+          <ModelSelector providers={providers} />
+          <PresetSelector placement="bottom" />
+        </div>
         <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-ink-3">
+          {settings.tools !== false && <span className="text-accent">智能体工具</span>}
           {settings.thinking && <span className="text-accent">深度思考</span>}
           {settings.webSearch && webSearchAvailable && <span className="text-accent">联网搜索</span>}
           <span className="tnum">温度 {settings.temperature.toFixed(1)}</span>
@@ -733,7 +776,12 @@ export default function ChatWindow() {
               </div>
             </>
           )}
-          {!empty && <ModelSelector providers={providers} />}
+          {!empty && (
+            <div className="flex items-center gap-1.5">
+              <ModelSelector providers={providers} />
+              <PresetSelector placement="bottom" />
+            </div>
+          )}
         </div>
       </header>
 

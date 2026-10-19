@@ -2,6 +2,7 @@
 import { memo, useEffect, useState } from 'react'
 import {
   AlertCircle,
+  AlertTriangle,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -20,6 +21,8 @@ import {
 import MarkdownRenderer from './MarkdownRenderer'
 import ReasoningBlock from './ReasoningBlock'
 import Citations from './Citations'
+import ToolCallsBlock from './ToolCallsBlock'
+import KnowledgeSourcesBlock from './KnowledgeSourcesBlock'
 import { MessageAttachments } from './Attachments'
 import { BrandIcon } from './ui/BrandLogo'
 import { AudioWaveform } from './ui/BrandGraphic'
@@ -237,6 +240,14 @@ const MessageItem = memo(function MessageItem({
       </div>
 
       <div className="min-w-0 flex-1 pt-0.5">
+        {message.modelSwitch && (
+          <div className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-600 dark:text-amber-400">
+            <AlertTriangle size={13} className="shrink-0" />
+            <span>模型故障自动降级切换：<b>{message.modelSwitch.from}</b> ➔ <b>{message.modelSwitch.to}</b></span>
+            {message.modelSwitch.reason && <span className="opacity-75">({message.modelSwitch.reason})</span>}
+          </div>
+        )}
+
         {message.error ? (
           <div
             role="alert"
@@ -263,12 +274,19 @@ const MessageItem = memo(function MessageItem({
                 durationMs={message.reasoningTimeMs}
               />
             )}
+            {message.toolCalls && message.toolCalls.length > 0 && (
+              <ToolCallsBlock
+                toolCalls={message.toolCalls}
+                toolResults={message.toolResults}
+              />
+            )}
             <MarkdownRenderer content={message.content} />
             {streaming && (
               // deslop-ignore-next-line 16 流式输出光标是功能性指示器
               <span className="stream-caret ml-0.5 inline-block h-[18px] w-[7px] rounded-[2px] bg-accent align-middle" />
             )}
             {!streaming && <Citations citations={message.citations} />}
+            <KnowledgeSourcesBlock sources={message.sources} />
           </>
         )}
 
