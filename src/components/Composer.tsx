@@ -199,13 +199,20 @@ export default function Composer({
       {/* 焦点指示由这张卡统一绘制（描边转强调色 + 抬升一层）。
           卡内的 textarea 用 no-focus-ring 关掉自带焦点环，否则会出现内外双层描边。 */}
       <div
-        className={`r-2xl border bg-panel transition-ui ${
+        className={`r-2xl relative border bg-panel transition-ui ${
           dragOver
             ? 'border-accent ring-soft'
             : 'border-rule shadow-2 focus-within:border-accent focus-within:ring-soft'
         } ${variant === 'hero' ? 'p-2.5' : 'p-2'}`}
         aria-busy={uploading}
       >
+        {dragOver && (
+          <div className="anim-fade-in absolute inset-0 z-20 flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed border-accent bg-panel/95 backdrop-blur-sm pointer-events-none">
+            <Paperclip size={22} className="text-accent anim-bounce" />
+            <span className="text-xs font-semibold text-accent">释放鼠标即可附加文件或图片</span>
+          </div>
+        )}
+
         {attachments.length > 0 && (
           <div className="px-1.5 pt-1.5">
             <ComposerAttachments attachments={attachments} onRemove={removeAttachment} />
@@ -321,14 +328,17 @@ export default function Composer({
 
           {/* 当有输入内容时，提供快速清空草稿按钮与字数计数器 */}
           {text.trim().length > 0 && (
-            <div className="flex items-center gap-1.5 mr-1 text-[11px] text-ink-4">
-              <span className="font-mono text-[10px] tracking-tight">{text.length} 字</span>
+            <div className="anim-fade-in flex items-center gap-2 mr-1 text-[11px] text-ink-4">
+              <span className="hidden sm:inline-block font-mono text-[10px] text-ink-4/80">
+                ↵ 发送 · Shift+↵ 换行
+              </span>
+              <span className="font-mono text-[10px] tracking-tight text-ink-3">{text.length} 字</span>
               <button
                 type="button"
                 onClick={clear}
                 title="清空输入"
                 aria-label="清空输入"
-                className="text-ink-4 hover:text-ink-2 p-1 rounded transition-colors"
+                className="tap-bounce text-ink-4 hover:text-ink-2 p-1 rounded transition-colors hover:bg-hover"
               >
                 <X size={12} />
               </button>
@@ -338,21 +348,26 @@ export default function Composer({
           {streaming ? (
             <button
               onClick={onStop}
-              className="press flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-rule text-ink-2 transition-ui hover:bg-hover hover:text-ink-1"
+              className="press tap-bounce relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-rule text-ink-2 transition-all hover:bg-hover hover:text-ink-1"
+              title="停止生成"
               aria-label="停止生成"
             >
-              <Square size={12} fill="currentColor" />
+              <span className="absolute inset-0 rounded-full border-2 border-accent/40 animate-ping opacity-40 pointer-events-none" />
+              <Square size={12} fill="currentColor" className="text-accent" />
             </button>
           ) : (
             <button
               onClick={submit}
               disabled={!canSend}
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition-ui disabled-x disabled:shadow-none ${
-                canSend ? 'press shadow-1 hover:bg-accent-hover hover:shadow-2' : ''
+              className={`press tap-bounce relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition-all duration-200 disabled-x disabled:shadow-none ${
+                canSend
+                  ? 'shadow-1 hover:bg-accent-hover hover:scale-105 hover:shadow-2'
+                  : 'opacity-40'
               }`}
+              title="发送消息 (Enter)"
               aria-label="发送"
             >
-              <ArrowUp size={17} />
+              <ArrowUp size={17} className={`transition-transform duration-200 ${canSend ? 'scale-110' : ''}`} />
             </button>
           )}
         </div>

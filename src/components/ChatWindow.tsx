@@ -40,6 +40,7 @@ import { usePresetStore } from '../store/preset'
 import { useKnowledgeStore } from '../store/knowledge'
 import { BrandIcon } from './ui/BrandLogo'
 import { ConstellationHero } from './ui/BrandGraphic'
+import { showToast } from './ui/Toast'
 import type { Attachment, Conversation, Message, MessageVariant, ProviderInfo } from '../types'
 
 interface Target {
@@ -617,19 +618,23 @@ export default function ChatWindow() {
       ),
     ]
     downloadText(`${safeFileName(active.title)}.md`, lines.join('\n'), 'text/markdown;charset=utf-8')
+    showToast('已导出 Markdown 文件', 'success')
   }, [active])
 
   const handleExportJson = useCallback(() => {
     if (!active) return
     downloadJson(`${safeFileName(active.title)}.json`, active)
+    showToast('已导出 JSON 结构文件', 'success')
   }, [active])
 
   const handleExportImage = useCallback(async () => {
     if (!active || !captureRef.current) return
     try {
       await exportNodeAsImage(captureRef.current, `${safeFileName(active.title)}.png`)
+      showToast('已导出长图到下载目录', 'success')
     } catch (e) {
       setNotice(`导出图片失败：${e instanceof Error ? e.message : String(e)}`)
+      showToast('导出长图失败', 'error')
     }
   }, [active])
 
@@ -712,9 +717,12 @@ export default function ChatWindow() {
             return displayItems.map((item, i) => (
               <button
                 key={`${item.title}-${shuffleSeed}`}
-                onClick={() => fillComposer(`${item.title}\n${item.desc}`)}
+                onClick={() => {
+                  fillComposer(`${item.title}\n${item.desc}`)
+                  showToast('已填入提示词', 'info')
+                }}
                 style={{ animationDelay: staggerDelay(i, 40) }}
-                className="anim-fade-up group flex flex-col text-left rounded-xl border border-rule/70 bg-panel/80 p-3 hover:border-accent hover:bg-panel hover:shadow-2 transition-all relative overflow-hidden"
+                className="anim-fade-up hover-lift press tap-bounce group flex flex-col text-left rounded-xl border border-rule/70 bg-panel/80 p-3 hover:border-accent hover:bg-panel hover:shadow-2 transition-all relative overflow-hidden"
               >
                 <div className="text-xs font-semibold text-ink-1 group-hover:text-accent transition-colors flex items-center justify-between gap-2">
                   <span className="truncate">{item.title}</span>
@@ -1010,10 +1018,17 @@ export default function ChatWindow() {
             <div className="pointer-events-none absolute bottom-32 left-1/2 z-10 -translate-x-1/2">
               <button
                 onClick={scrollToBottom}
-                className="anim-scale-in pointer-events-auto r-sm flex h-9 w-9 items-center justify-center border border-rule bg-raised text-ink-2 shadow-2 transition-ui hover-lift press hover:bg-hover"
+                className="anim-scale-in tap-bounce pointer-events-auto relative flex h-9 w-9 items-center justify-center rounded-full border border-rule/80 bg-raised/95 backdrop-blur-md text-ink-2 shadow-2 transition-all hover-lift press hover:bg-hover hover:text-ink-1 hover:border-accent"
                 aria-label="回到底部"
+                title="回到底部"
               >
-                <ArrowDown size={16} />
+                {streaming && (
+                  <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent" />
+                  </span>
+                )}
+                <ArrowDown size={15} />
               </button>
             </div>
           )}

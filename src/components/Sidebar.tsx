@@ -39,6 +39,7 @@ import {
 } from '../api/client'
 import { useCommandPaletteOpen, useMarketOpen, useSettingsOpen, useUsageOpen } from './openPanels'
 import { BrandLogo } from './ui/BrandLogo'
+import { showToast } from './ui/Toast'
 import { staggerDelay } from '../lib/motion'
 import { useDismiss } from '../lib/useDismiss'
 import { usePresence } from '../lib/usePresence'
@@ -96,7 +97,10 @@ function ConversationItem({
 
   const commitRename = () => {
     const title = draft.trim()
-    if (title && title !== conv.title) renameConversation(conv.id, title)
+    if (title && title !== conv.title) {
+      renameConversation(conv.id, title)
+      showToast('已重命名会话', 'success')
+    }
     setEditing(false)
   }
 
@@ -107,6 +111,7 @@ function ConversationItem({
       .filter(Boolean)
     setConversationTags(conv.id, parsed)
     void updateConversationMetadata(conv.id, { tags: parsed }).catch(() => {})
+    showToast('已更新会话标签', 'success')
     setTagEditing(false)
   }
 
@@ -191,12 +196,12 @@ function ConversationItem({
         }
       }}
       style={enterDelay}
-      className={`group anim-fade-in relative flex cursor-pointer items-center gap-2 rounded-lg py-2 pl-2.5 pr-1.5 text-[13px] transition-ui ${
+      className={`group anim-fade-in relative flex cursor-pointer items-center gap-2 rounded-lg py-2 pl-2.5 pr-1.5 text-[13px] transition-all duration-150 ${
         dragOver
           ? 'bg-hover ring-1 ring-accent'
           : active
-            ? 'bg-hover font-medium text-ink-1'
-            : 'text-ink-2 hover:bg-hover hover:text-ink-1'
+            ? 'bg-hover font-medium text-ink-1 shadow-xs'
+            : 'text-ink-2 hover:bg-hover hover:text-ink-1 hover:translate-x-0.5'
       }`}
     >
       {/* 激活指示条 */}
@@ -252,6 +257,7 @@ function ConversationItem({
           onClick={(e) => {
             e.stopPropagation()
             toggleConversationStar(conv.id)
+            showToast(conv.starred ? '已取消收藏' : '已收藏会话', 'info')
           }}
           className={`${ICON_BTN_SM} ${conv.starred ? 'text-amber-500' : 'hover:text-amber-500'}`}
           aria-label={conv.starred ? '取消收藏' : '收藏'}
@@ -265,6 +271,7 @@ function ConversationItem({
           onClick={(e) => {
             e.stopPropagation()
             togglePin(conv.id)
+            showToast(conv.pinned ? '已取消置顶' : '已置顶会话', 'info')
           }}
           className={ICON_BTN_SM}
           aria-label={conv.pinned ? '取消置顶' : '置顶'}
@@ -407,9 +414,13 @@ export default function Sidebar({ open }: { open: boolean }) {
 
   // 挂载时从服务端同步文件夹与全局标签 (Q-2026-10-19-05)
   useEffect(() => {
+    let cancelled = false
+
     fetchFolders()
-      .then((res) => {
-        if (res && Array.isArray(res.items)) {
+      .then(async (res) => {
+        if (cancelled || !res || !Array.isArray(res.items)) return
+
+        if (res.items.length > 0) {
           const mapped: ConversationFolder[] = res.items.map((it) => ({
             id: it.id,
             name: it.name,
@@ -417,6 +428,43 @@ export default function Sidebar({ open }: { open: boolean }) {
             createdAt: Date.now(),
           }))
           setFolders(mapped)
+          return
+        }
+
+        /**
+         * 服务端一个文件夹都没有，但本地可能已经有了 —— 那批是「文件夹还只存本地」时建的。
+         * 这里如果直接 setFolders([])，它们会被清空，里面的会话全部挤进「未分类」，
+         * 用户看到的是「我分好的文件夹没了」。所以做一次性迁移：把本地的推上去，
+         * 并把本地 id 换成服务端 id（会话的 folderId 也要跟着换，否则指向不存在的 id）。
+         */
+        const local = useChatStore.getState().folders
+        if (local.length === 0) return
+
+        const idMap = new Map<string, string>()
+        for (const f of local) {
+          try {
+            const created = await createFolderApi({ name: f.name, icon: f.emoji })
+            if (created?.id) idMap.set(f.id, created.id)
+          } catch {
+            // 单个推失败就留在本地，下次挂载再试；不能因为失败把本地删掉
+          }
+        }
+        if (cancelled || idMap.size === 0) return
+
+        useChatStore.setState((s) => ({
+          folders: s.folders.map((f) => {
+            const next = idMap.get(f.id)
+            return next ? { ...f, id: next } : f
+          }),
+          conversations: s.conversations.map((c) => {
+            const next = c.folderId ? idMap.get(c.folderId) : undefined
+            return next ? { ...c, folderId: next } : c
+          }),
+        }))
+
+        // 会话归属也要落库，否则服务端只知道文件夹存在、不知道哪些会话在里面
+        for (const c of useChatStore.getState().conversations) {
+          if (c.folderId) void updateConversationMetadata(c.id, { folderId: c.folderId }).catch(() => {})
         }
       })
       .catch(() => {})
@@ -428,6 +476,11 @@ export default function Sidebar({ open }: { open: boolean }) {
         }
       })
       .catch(() => {})
+
+    // 卸载后别再往 store 里写（迁移是异步的，可能跨越卸载）
+    return () => {
+      cancelled = true
+    }
   }, [setFolders])
 
   useEffect(() => {

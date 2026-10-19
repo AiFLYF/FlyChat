@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react'
 import { generateTaskRewrite, fetchTasksInfo } from '../api/client'
+import { showToast } from './ui/Toast'
 import MarkdownRenderer from './MarkdownRenderer'
 import ReasoningBlock from './ReasoningBlock'
 import Citations from './Citations'
@@ -89,11 +90,12 @@ function CopyButton({ text }: { text: string }) {
       onClick={() =>
         navigator.clipboard.writeText(text).then(() => {
           setCopied(true)
+          showToast('已复制内容到剪贴板', 'success')
           setTimeout(() => setCopied(false), 1500)
         })
       }
     >
-      {copied ? <Check size={13} /> : <Copy size={13} />}
+      {copied ? <Check size={13} className="text-emerald-500 anim-bounce" /> : <Copy size={13} />}
       {/* 复制成功有文字反馈，读屏也能播报 */}
       <span aria-live="polite">{copied ? '已复制' : '复制'}</span>
     </IconButton>
@@ -435,14 +437,17 @@ const MessageItem = memo(function MessageItem({
                         setRewriting(true)
                         try {
                           const res = await generateTaskRewrite({ text: message.content, tone: tone.key })
-                          if (res.text) setRewriteResult(res.text)
+                          if (res.text) {
+                            setRewriteResult(res.text)
+                            showToast('改写完成', 'success')
+                          }
                         } catch (err: any) {
-                          alert(`改写失败: ${err.message}`)
+                          showToast(`改写失败: ${err.message}`, 'error')
                         } finally {
                           setRewriting(false)
                         }
                       }}
-                      className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-ink-2 hover:bg-hover hover:text-ink-1 text-left"
+                      className="press flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-ink-2 hover:bg-hover hover:text-ink-1 text-left transition-colors"
                     >
                       <span>{tone.label}</span>
                     </button>
@@ -455,9 +460,19 @@ const MessageItem = memo(function MessageItem({
             <IconButton
               label={message.starred ? '取消收藏' : '收藏此回答'}
               active={message.starred}
-              onClick={() => onToggleStar?.(message.id)}
+              onClick={() => {
+                onToggleStar?.(message.id)
+                showToast(message.starred ? '已取消收藏' : '已收藏此回答', 'info')
+              }}
             >
-              <Star size={13} className={message.starred ? 'fill-amber-400 text-amber-500' : ''} />
+              <Star
+                size={13}
+                className={
+                  message.starred
+                    ? 'fill-amber-400 text-amber-500 anim-bounce'
+                    : 'transition-transform hover:scale-110'
+                }
+              />
               <span className="hidden sm:inline">{message.starred ? '已收藏' : '收藏'}</span>
             </IconButton>
 
@@ -546,9 +561,9 @@ const MessageItem = memo(function MessageItem({
                 type="button"
                 onClick={() => {
                   navigator.clipboard.writeText(rewriteResult)
-                  alert('已复制改写结果')
+                  showToast('已复制改写结果', 'success')
                 }}
-                className="rounded bg-panel px-2.5 py-1 text-[11px] border border-rule hover:bg-hover"
+                className="press rounded bg-panel px-2.5 py-1 text-[11px] border border-rule hover:bg-hover transition-colors"
               >
                 复制
               </button>
@@ -558,8 +573,9 @@ const MessageItem = memo(function MessageItem({
                   onClick={() => {
                     onEdit(message.id, rewriteResult)
                     setRewriteResult(null)
+                    showToast('已替换为改写内容', 'success')
                   }}
-                  className="rounded bg-accent px-2.5 py-1 text-[11px] text-white hover:opacity-90"
+                  className="press rounded bg-accent px-2.5 py-1 text-[11px] text-white hover:opacity-90 transition-opacity"
                 >
                   替换原文
                 </button>
@@ -581,10 +597,10 @@ const MessageItem = memo(function MessageItem({
                   key={sIdx}
                   type="button"
                   onClick={() => onPickSuggestion?.(suggestion)}
-                  className="flex items-center gap-1.5 rounded-full border border-rule/80 bg-panel px-3 py-1 text-xs text-ink-2 transition-all hover:border-accent hover:bg-hover hover:text-accent shadow-sm"
+                  className="hover-lift press flex items-center gap-1.5 rounded-full border border-rule/80 bg-panel px-3 py-1 text-xs text-ink-2 transition-all hover:border-accent hover:bg-hover hover:text-accent shadow-1 group"
                 >
                   <span>{suggestion}</span>
-                  <span className="text-[10px] opacity-40">↵</span>
+                  <span className="text-[10px] text-accent opacity-60 transition-transform duration-200 group-hover:translate-x-0.5">↵</span>
                 </button>
               ))}
             </div>

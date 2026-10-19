@@ -4,67 +4,220 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ---------------------------------------------------------------
-   设计令牌：一套中性墨色阶 + 单一强调色（蓝）
-   明暗两套只换值、不换语义，组件只引用语义名
+   设计令牌 v2 —— 借鉴大厂产品的中性色阶 + 单一强调色
+   亮色：柔灰画布 + 纯白卡面，靠「层」与「影」建立层次
+   暗色：分层石墨色，避免纯黑
    --------------------------------------------------------------- */
 :root {
-  --canvas: #ffffff;
-  --panel: #fafafa;
+  --canvas: #f7f7f8;
+  --sidebar: #ececed;
+  --panel: #ffffff;
   --raised: #ffffff;
-  --hover: #f4f4f5;
+  --hover: #ebebed;
+  --hover-soft: #f3f3f4;
+  /* 文字色阶：ink-1/2/3 均满足 WCAG AA（对 --canvas ≥ 4.5:1）
+     ink-1 ≈ 16.9:1 / ink-2 ≈ 7.2:1 / ink-3 ≈ 4.5:1
+     ink-4 仅供装饰（滚动条、分隔）与 disabled，不承载正文 */
   --ink-1: #18181b;
   --ink-2: #52525b;
-  --ink-3: #a1a1aa;
-  --rule: #e7e7ea;
-  --rule-strong: #d4d4d8;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-soft: #eff4ff;
+  --ink-3: #71717a;
+  --ink-4: #90909b;
+  --rule: #e6e6e9;
+  --rule-strong: #d6d6db;
+
+  /* 禁用态统一不透明度，避免各处 25% / 40% 不一致 */
+  --disabled-opacity: 0.4;
+
+  --accent: #3a6df0;
+  --accent-hover: #2f5cd8;
+  --accent-soft: #eef3ff;
   --on-accent: #ffffff;
-  --danger: #b91c1c;
-  --focus: rgba(37, 99, 235, 0.35);
+  --danger: #d92929;
+  --success: #17a05e;
+
+  /* 用户消息气泡：中性灰，接近 ChatGPT 观感 */
+  --bubble-user: #ececee;
+  --on-bubble-user: #18181b;
+
+  /* 主按钮：与主题反转的中性色（Claude / ChatGPT 的做法），避免到处用蓝 */
+  --inverse: #18181b;
+  --on-inverse: #ffffff;
+
+  /* 投影：柔和、低饱和，大厂质感的关键。
+     每层都带一道 inset 顶部高光（--bevel），让卡面有「厚度」而不是一张纸片，
+     这是替代硬边框、减少线框感的关键手法。 */
+  --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  --shadow-1: var(--bevel), 0 1px 2px rgba(16, 17, 26, 0.05);
+  --shadow-2: var(--bevel), 0 4px 16px -2px rgba(16, 17, 26, 0.08), 0 1px 3px rgba(16, 17, 26, 0.05);
+  --shadow-3: var(--bevel), 0 10px 32px -6px rgba(16, 17, 26, 0.12), 0 2px 6px rgba(16, 17, 26, 0.06);
+  /* 顶栏滚动后浮起：用一段向下衰减的柔影代替 1px 硬分隔线 */
+  --shadow-header: 0 12px 20px -16px rgba(16, 17, 26, 0.28);
+  /* 控件级焦点环：单圈 2px 实色（对相邻色 ≥ 3:1，满足 WCAG 2.4.13 焦点外观）。
+     刻意不再叠第二圈柔光——「2px 实色 + 6px 光晕 + 元素自身描边」会糊成一道粗边。 */
+  --ring: 0 0 0 3px rgba(58, 109, 240, 0.22);
+  --ring-shadow: 0 0 0 2px var(--accent);
+  /* 容器级焦点态（如输入卡）：由容器自己的描边负责识别，只补柔和光晕 + 抬升。
+     大面积圆角容器套一圈 2px 实色会非常抢眼，这里用描边变色（≥3:1）满足 2.4.7。 */
+  --ring-soft: 0 0 0 4px rgba(58, 109, 240, 0.13), var(--shadow-3);
+
+  --focus: rgba(58, 109, 240, 0.35);
+
+  /* 代码高亮（亮色） */
+  --code-fg: #24292f;
+  --code-comment: #6e7781;
+  --code-keyword: #cf222e;
+  --code-string: #0a3069;
+  --code-number: #0550ae;
+  --code-function: #8250df;
+  --code-attr: #953800;
+  --code-tag: #116329;
+  --code-variable: #953800;
 }
 
 .dark {
-  --canvas: #101012;
+  --canvas: #0e0e10;
+  --sidebar: #141417;
   --panel: #17171a;
   --raised: #1c1c20;
-  --hover: #26262b;
-  --ink-1: #f4f4f5;
-  --ink-2: #b4b4bd;
-  --ink-3: #7c7c86;
-  --rule: #2a2a30;
-  --rule-strong: #3a3a42;
-  --accent: #4d84f5;
-  --accent-hover: #6b9bf7;
-  --accent-soft: #1b2437;
-  --on-accent: #0b0b0d;
-  --danger: #f28b82;
-  --focus: rgba(77, 132, 245, 0.4);
+  --hover: #24242a;
+  --hover-soft: #1e1e23;
+  --ink-1: #f2f2f3;
+  --ink-2: #adadb6;
+  --ink-3: #808089;
+  --ink-4: #6a6a73;
+  --rule: #26262b;
+  --rule-strong: #38383f;
+
+  --accent: #5b8bff;
+  --accent-hover: #7ba3ff;
+  --accent-soft: #1a2338;
+  --on-accent: #ffffff;
+  --danger: #f4736c;
+  --success: #4ec98a;
+
+  --bubble-user: #24242a;
+  --on-bubble-user: #f2f2f3;
+
+  --inverse: #f2f2f3;
+  --on-inverse: #18181b;
+
+  --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-1: var(--bevel), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: var(--bevel), 0 4px 16px -2px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-3: var(--bevel), 0 10px 32px -6px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.45);
+  --shadow-header: 0 12px 20px -16px rgba(0, 0, 0, 0.75);
+  --ring: 0 0 0 3px rgba(91, 139, 255, 0.26);
+  --ring-shadow: 0 0 0 2px var(--accent);
+  --ring-soft: 0 0 0 4px rgba(91, 139, 255, 0.17), var(--shadow-3);
+
+  --focus: rgba(91, 139, 255, 0.4);
+
+  /* 代码高亮（暗色） */
+  --code-fg: #e6edf3;
+  --code-comment: #8b949e;
+  --code-keyword: #ff7b72;
+  --code-string: #a5d6ff;
+  --code-number: #79c0ff;
+  --code-function: #d2a8ff;
+  --code-attr: #ffa657;
+  --code-tag: #7ee787;
+  --code-variable: #ffa657;
 }
 
-/* 语义化工具类：组件里只写 bg-canvas / text-ink-2 / border-rule */
+/* ---------------------------------------------------------------
+   动效令牌：统一节奏，全站只从这四个值里选
+   ease-out 用于「进场」（快出慢收），ease-std 用于「状态切换」
+   --------------------------------------------------------------- */
+:root {
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-std: cubic-bezier(0.2, 0, 0, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-1: 120ms; /* 按压、图标旋转 */
+  --dur-2: 200ms; /* 悬停、颜色 */
+  --dur-3: 320ms; /* 面板、转场 */
+}
+
+/* ---------------------------------------------------------------
+   语义化工具类：组件里只写语义名，不写硬编码色值
+   --------------------------------------------------------------- */
 @utility bg-canvas { background-color: var(--canvas); }
+@utility bg-sidebar { background-color: var(--sidebar); }
 @utility bg-panel { background-color: var(--panel); }
 @utility bg-raised { background-color: var(--raised); }
 @utility bg-hover { background-color: var(--hover); }
+@utility bg-hover-soft { background-color: var(--hover-soft); }
+@utility bg-bubble-user { background-color: var(--bubble-user); }
+@utility bg-inverse { background-color: var(--inverse); }
+@utility text-on-inverse { color: var(--on-inverse); }
 @utility bg-accent { background-color: var(--accent); }
 @utility bg-accent-soft { background-color: var(--accent-soft); }
+@utility bg-accent-hover { background-color: var(--accent-hover); }
 @utility text-ink-1 { color: var(--ink-1); }
 @utility text-ink-2 { color: var(--ink-2); }
 @utility text-ink-3 { color: var(--ink-3); }
+@utility text-ink-4 { color: var(--ink-4); }
 @utility text-accent { color: var(--accent); }
 @utility text-on-accent { color: var(--on-accent); }
+@utility text-on-bubble-user { color: var(--on-bubble-user); }
 @utility text-danger { color: var(--danger); }
+@utility text-success { color: var(--success); }
 @utility border-rule { border-color: var(--rule); }
 @utility border-rule-strong { border-color: var(--rule-strong); }
 @utility border-accent { border-color: var(--accent); }
-@utility hover-bg-hover { &:hover { background-color: var(--hover); } }
+@utility bg-rule-strong { background-color: var(--rule-strong); }
+@utility ring-accent { --tw-ring-color: var(--accent); }
+@utility ring-focus { box-shadow: var(--ring); }
+/* 容器级焦点/拖拽态：柔和光晕 + 抬升（配合容器自身的 border-accent 使用） */
+@utility ring-soft { box-shadow: var(--ring-soft); }
+@utility shadow-1 { box-shadow: var(--shadow-1); }
+@utility shadow-2 { box-shadow: var(--shadow-2); }
+@utility shadow-3 { box-shadow: var(--shadow-3); }
 
-/* 圆角节奏：小件 8 / 容器 12 / 面板 16（内件 = 外层 − 内边距） */
+/* 禁用态：所有可交互元素统一，替代散落的 opacity-25 / opacity-40 */
+@utility disabled-x {
+  &:disabled {
+    opacity: var(--disabled-opacity);
+    cursor: not-allowed;
+  }
+}
+
+/* 圆角节奏：小件 8 / 中件 12 / 输入框 18 / 大件 24 */
 @utility r-sm { border-radius: 8px; }
 @utility r-md { border-radius: 12px; }
 @utility r-lg { border-radius: 16px; }
+@utility r-xl { border-radius: 20px; }
+@utility r-2xl { border-radius: 24px; }
+@utility r-pill { border-radius: 999px; }
+
+/* ---------------------------------------------------------------
+   交互工具类：悬停抬升 / 按压回弹 / 统一过渡曲线
+   只作用于可交互元素，位移控制在 1~2px，不干扰点击热区
+   --------------------------------------------------------------- */
+@utility transition-ui {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  transition-duration: var(--dur-2);
+  transition-timing-function: var(--ease-std);
+}
+@utility press {
+  transition: transform var(--dur-1) var(--ease-spring), opacity var(--dur-1) var(--ease-std);
+  &:active { transform: scale(0.96); }
+}
+@utility hover-lift {
+  transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-std);
+  &:hover { transform: translateY(-1.5px); }
+  &:active { transform: translateY(0) scale(0.98); }
+}
+@utility hover-glow {
+  transition: box-shadow var(--dur-2) var(--ease-std), border-color var(--dur-2) var(--ease-std);
+  &:hover {
+    box-shadow: 0 0 16px -2px var(--accent-soft);
+    border-color: var(--accent);
+  }
+}
+@utility tap-bounce {
+  transition: transform var(--dur-1) var(--ease-spring);
+  &:active { transform: scale(0.91); }
+}
 
 html,
 body,
@@ -72,11 +225,35 @@ body,
   height: 100%;
 }
 
+html {
+  /* 滚动容器内的平滑滚动由 JS 控制，这里只兜底全局锚点跳转 */
+  scroll-behavior: smooth;
+  scroll-padding-top: 72px;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  /* 数字与标点用等宽字形，避免时间、token 计数跳动 */
+  font-feature-settings: "tnum" 1, "cv02" 1, "cv03" 1, "cv04" 1;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  background-color: var(--canvas);
+  color: var(--ink-1);
+  transition: background-color var(--dur-2) var(--ease-std), color var(--dur-2) var(--ease-std);
+  /* 移动端禁止橡皮筋把顶栏一起拉动 */
+  overscroll-behavior-y: none;
+}
+
+/* 注意：不要在这里对 h1/h2/h3 全局设 `text-wrap: balance`。
+   无层级（unlayered）规则在级联层中优先于 Tailwind 的 @layer utilities，
+   会把 .truncate 的 white-space:nowrap 压掉，导致标题换行、顶栏被撑高。
+   需要平衡换行的标题改用 text-balance 工具类就地声明。 */
+
+/* 数字、时间、计数统一等宽 */
+@utility tnum {
+  font-variant-numeric: tabular-nums;
 }
 
 ::selection {
@@ -84,92 +261,68 @@ body {
   color: var(--ink-1);
 }
 
-/* 键盘焦点才显示焦点环，鼠标点击不显示 */
+/* 键盘焦点才显示，鼠标点击不显示。
+   用 box-shadow 而非 outline：outline 会被父级 overflow-hidden 裁掉（下拉菜单里尤其明显），
+   同时保留 2px 实色环保证对相邻色 ≥3:1（WCAG 2.4.11）。 */
 :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--ring-shadow);
 }
 
-/* 尊重系统的减弱动效设置 */
+/* 焦点指示由「父级容器」绘制的元素（如输入卡里的 textarea）要主动关掉自带环，
+   否则会出现「外框 + 内框」的双层描边。
+   必须写成无层级规则：它要压过上面同样无层级的 :focus-visible，
+   写成 @utility 会落进 utilities 层而失效。 */
+:focus-visible.no-focus-ring {
+  box-shadow: none;
+}
+
+/* 键盘用户跳转到主内容/侧栏时给可聚焦容器一个明确边界 */
+[tabindex='-1']:focus {
+  outline: none;
+}
+
+/* 尊重系统的减弱动效设置。
+   注意：必须同时归零 delay，否则带 stagger 延迟的入场动画
+   会让元素先保持 opacity:0（fill-mode: both）再突然出现。 */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
 }
 
-/* ---------------------------------------------------------------
-   Markdown 正文排版：靠字号与间距建立层次
-   --------------------------------------------------------------- */
-.markdown-body {
-  color: var(--ink-1);
-  font-size: 15px;
-  line-height: 1.75;
-}
-.markdown-body > *:first-child { margin-top: 0; }
-.markdown-body > *:last-child { margin-bottom: 0; }
-.markdown-body p { margin: 0.75em 0; }
-.markdown-body h1,
-.markdown-body h2,
-.markdown-body h3,
-.markdown-body h4 {
-  margin: 1.5em 0 0.6em;
-  font-weight: 600;
-  line-height: 1.35;
-  letter-spacing: -0.01em;
-}
-.markdown-body h1 { font-size: 1.4em; }
-.markdown-body h2 { font-size: 1.2em; }
-.markdown-body h3 { font-size: 1.05em; }
-.markdown-body ul,
-.markdown-body ol {
-  margin: 0.75em 0;
-  padding-left: 1.4em;
-}
-.markdown-body ul { list-style: disc; }
-.markdown-body ol { list-style: decimal; }
-.markdown-body li { margin: 0.3em 0; }
-.markdown-body li::marker { color: var(--ink-3); }
-.markdown-body blockquote {
-  margin: 1em 0;
-  padding-left: 1em;
-  border-left: 2px solid var(--rule-strong);
-  color: var(--ink-2);
-}
-.markdown-body hr {
-  margin: 1.5em 0;
-  border: 0;
-  border-top: 1px solid var(--rule);
-}
-.markdown-body a {
-  color: var(--accent);
-  text-underline-offset: 2px;
-  /* deslop-ignore-next-line 09 链接保留下划线是正文可访问性要求 */
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
-}
-.markdown-body a:hover { text-decoration-color: var(--accent); }
-.markdown-body code {
-  /* deslop-ignore-next-line 34 等宽字体仅用于代码 */
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.88em;
-}
-.markdown-body pre code {
-  background: transparent;
-  padding: 0;
-  font-size: 13px;
-  line-height: 1.7;
-}
-.markdown-body img {
-  max-width: 100%;
-  border-radius: 8px;
+/* 移动端底部安全区（iOS 手势条 / 安卓导航栏） */
+@utility pb-safe {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
 }
 
-/* 滚动条：细、低对比，不抢视觉 */
+/* 主题切换的全局颜色过渡：由 App 在切换瞬间给 <html> 挂上 .theme-anim，260ms 后摘掉。
+   否则整站是「啪」地换色，非常生硬。
+   只在系统未要求减少动效时生效；用 !important 是为了压过各元素自己的 transition 声明。 */
+@media (prefers-reduced-motion: no-preference) {
+  .theme-anim,
+  .theme-anim *,
+  .theme-anim *::before,
+  .theme-anim *::after {
+    transition:
+      background-color var(--dur-2) var(--ease-std),
+      border-color var(--dur-2) var(--ease-std),
+      color var(--dur-2) var(--ease-std),
+      fill var(--dur-2) var(--ease-std),
+      stroke var(--dur-2) var(--ease-std) !important;
+  }
+}
+
+/* ---------------------------------------------------------------
+   滚动条：细、低对比，不抢视觉
+   --------------------------------------------------------------- */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--rule-strong) transparent;
@@ -188,6 +341,337 @@ body {
   background-clip: content-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background-color: var(--ink-3);
+  background-color: var(--ink-4);
   background-clip: content-box;
+}
+
+/* ---------------------------------------------------------------
+   Markdown 正文排版
+   --------------------------------------------------------------- */
+.markdown-body {
+  color: var(--ink-1);
+  font-size: 15px;
+  line-height: 1.78;
+  letter-spacing: -0.003em;
+}
+.markdown-body > *:first-child { margin-top: 0; }
+.markdown-body > *:last-child { margin-bottom: 0; }
+.markdown-body p { margin: 0.72em 0; }
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 1.5em 0 0.6em;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.012em;
+}
+.markdown-body h1 { font-size: 1.36em; }
+.markdown-body h2 { font-size: 1.2em; }
+.markdown-body h3 { font-size: 1.06em; }
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.72em 0;
+  padding-left: 1.45em;
+}
+.markdown-body ul { list-style: disc; }
+.markdown-body ol { list-style: decimal; }
+.markdown-body li { margin: 0.28em 0; }
+.markdown-body li::marker { color: var(--ink-3); }
+.markdown-body blockquote {
+  margin: 1em 0;
+  padding-left: 1em;
+  border-left: 2px solid var(--rule-strong);
+  color: var(--ink-2);
+}
+.markdown-body hr {
+  margin: 1.5em 0;
+  border: 0;
+  border-top: 1px solid var(--rule);
+}
+.markdown-body a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+  /* deslop-ignore-next-line 09 链接保留下划线是正文可访问性要求 */
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.markdown-body a:hover { text-decoration-color: var(--accent); }
+.markdown-body code {
+  /* deslop-ignore-next-line 34 等宽字体仅用于代码 */
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+}
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.72;
+}
+.markdown-body img {
+  max-width: 100%;
+  border-radius: 10px;
+}
+
+/* 代码高亮（highlight.js 语义类） */
+.hljs { color: var(--code-fg); background: transparent; }
+.hljs-comment,
+.hljs-quote { color: var(--code-comment); font-style: italic; }
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-doctag,
+.hljs-type { color: var(--code-keyword); }
+.hljs-string,
+.hljs-title,
+.hljs-name,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition,
+.hljs-template-tag { color: var(--code-string); }
+.hljs-number,
+.hljs-meta,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-params,
+.hljs-link { color: var(--code-number); }
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-variable,
+.hljs-template-variable { color: var(--code-attr); }
+.hljs-title.function_,
+.hljs-function .hljs-title { color: var(--code-function); }
+.hljs-tag,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp { color: var(--code-tag); }
+.hljs-deletion { color: var(--code-keyword); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+
+/* KaTeX 公式 */
+.markdown-body .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.3em 0;
+}
+.markdown-body .katex { font-size: 1.03em; }
+
+/* ---------------------------------------------------------------
+   动效系统
+   原则：进场用 ease-out（快出慢收），位移不超过 12px，时长不超过 320ms；
+   所有 keyframes 只改 opacity / transform，不触发重排。
+   --------------------------------------------------------------- */
+
+/* —— 关键帧 —— */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-down {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes shimmer {
+  from { background-position: -180% 0; }
+  to { background-position: 180% 0; }
+}
+@keyframes caret-blink {
+  0%, 45% { opacity: 1; }
+  55%, 100% { opacity: 0.15; }
+}
+/* 弹窗/浮层的进出场：只做位移与缩放，透明度由外层的 fade 统一负责，
+   这样两层动画叠加时不会出现「双倍淡出」显得发虚 */
+@keyframes modal-rise {
+  from { transform: translateY(14px) scale(0.965); }
+  to { transform: translateY(0) scale(1); }
+}
+@keyframes modal-sink {
+  from { transform: translateY(0) scale(1); }
+  to { transform: translateY(8px) scale(0.978); }
+}
+@keyframes menu-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(-4px) scale(0.97); }
+}
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes bounce-spring {
+  0% { transform: scale(0.8); }
+  50% { transform: scale(1.2); }
+  75% { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+@keyframes pulse-halo {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  50% { box-shadow: 0 0 0 7px var(--accent-soft); }
+}
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: 0.65; }
+}
+
+/* —— 入场工具类（配合 style={{ animationDelay }} 做错峰）—— */
+@utility anim-bounce {
+  animation: bounce-spring var(--dur-3) var(--ease-spring) both;
+}
+@utility pulse-active {
+  animation: pulse-halo 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@utility dot-pulse {
+  animation: pulse-dot 1.8s var(--ease-std) infinite;
+}
+@utility anim-fade-in {
+  animation: fade-in var(--dur-3) var(--ease-std) both;
+}
+@utility anim-fade-up {
+  animation: fade-up var(--dur-3) var(--ease-out) both;
+}
+@utility anim-fade-down {
+  animation: fade-down var(--dur-2) var(--ease-out) both;
+}
+@utility anim-scale-in {
+  animation: scale-in var(--dur-3) var(--ease-out) both;
+}
+@utility anim-slide-up {
+  animation: slide-up var(--dur-3) var(--ease-out) both;
+}
+@utility anim-fade-out {
+  animation: fade-out var(--dur-2) var(--ease-std) both;
+}
+/* 弹窗面板：进场稍慢（有「升起」感），退场更快（不拖沓） */
+@utility anim-modal-rise {
+  animation: modal-rise var(--dur-3) var(--ease-out) both;
+}
+@utility anim-modal-sink {
+  animation: modal-sink var(--dur-2) var(--ease-std) both;
+}
+@utility anim-menu-out {
+  animation: menu-out var(--dur-1) var(--ease-std) both;
+}
+.animate-pop {
+  animation: pop-in var(--dur-1) var(--ease-out) both;
+}
+
+/* —— 骨架屏 —— */
+.skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--hover-soft) 0%,
+    var(--hover) 40%,
+    var(--hover-soft) 80%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.4s var(--ease-std) infinite;
+}
+
+/* —— 流式输出光标：比 animate-pulse 更接近真实输入 —— */
+.stream-caret {
+  animation: caret-blink 1s steps(1, end) infinite;
+}
+
+/* —— 滚动视差：由 useParallax 写入 --scroll(0~1)，这里只做映射 —— */
+.parallax-hero {
+  transform: translate3d(0, calc(var(--scroll, 0) * -28px), 0);
+  opacity: calc(1 - var(--scroll, 0) * 0.9);
+  will-change: transform, opacity;
+}
+
+/* —— 顶栏：滚动后浮起，用柔影代替硬分隔线 —— */
+@utility header-elevated {
+  box-shadow: var(--shadow-header);
+  backdrop-filter: saturate(1.4) blur(8px);
+}
+
+/* 分隔线：两端淡出的渐变细线，比 1px 实线柔和得多 */
+@utility hairline {
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--rule) 10%,
+    var(--rule) 90%,
+    transparent
+  );
+}
+
+/* ---------------------------------------------------------------
+   滑块（range）
+   原生 range 在 Windows/Chrome 下是系统灰轨道 + 方块滑块，与全站质感不符，
+   这里自绘：轨道 + 已填充进度 + 圆形滑块（hover 放大 / 按下回弹 / 聚焦描边）。
+   填充比例由组件写入 --val，避免逐帧 JS 计算。
+   --------------------------------------------------------------- */
+.range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  cursor: pointer;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0%,
+    var(--accent) var(--val, 0%),
+    var(--rule-strong) var(--val, 0%),
+    var(--rule-strong) 100%
+  );
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 2px solid var(--accent);
+  box-shadow: var(--shadow-1);
+  transition: transform var(--dur-1) var(--ease-spring), box-shadow var(--dur-2) var(--ease-std);
+}
+.range:hover::-webkit-slider-thumb { transform: scale(1.15); }
+.range:active::-webkit-slider-thumb { transform: scale(0.94); }
+/* 焦点指示做在滑块上：2px 间隙 + 2px 实色环，对相邻色 ≥3:1 */
+.range:focus-visible {
+  box-shadow: none;
+}
+.range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
+}
+/* Firefox 等价实现 */
+.range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 2px solid var(--accent);
+  box-shadow: var(--shadow-1);
+  transition: transform var(--dur-1) var(--ease-spring), box-shadow var(--dur-2) var(--ease-std);
+}
+.range:hover::-moz-range-thumb { transform: scale(1.15); }
+.range:active::-moz-range-thumb { transform: scale(0.94); }
+.range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
+}
+.range::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
 }

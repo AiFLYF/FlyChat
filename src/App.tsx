@@ -23,6 +23,7 @@ import {
   useUsageOpen,
 } from './components/openPanels'
 import { usePresence } from './lib/usePresence'
+import ToastContainer from './components/ui/Toast'
 
 export default function App() {
   const sidebarOpen = useChatStore((s) => s.sidebarOpen)
@@ -220,6 +221,7 @@ export default function App() {
       <UserManagementModal />
       <PresetModal />
       <KnowledgeModal />
+      <ToastContainer />
       {boot.mounted && (
         <div
           className={`absolute inset-0 z-50 ${

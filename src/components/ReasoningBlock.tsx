@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Brain, Check, ChevronRight, Copy, Sparkles } from 'lucide-react'
+import { showToast } from './ui/Toast'
 import MarkdownRenderer from './MarkdownRenderer'
 
 /**
@@ -65,6 +66,7 @@ export default function ReasoningBlock({
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
+      showToast('已复制思考过程', 'success')
       setTimeout(() => setCopied(false), 2000)
     } catch {
       // ignore
