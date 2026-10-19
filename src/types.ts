@@ -195,6 +195,8 @@ export interface Conversation {
   documentIds?: string[]
   /** 会话总结摘要 (Q-2026-10-19-06) */
   summary?: string
+  /** 该会话专属的系统提示词（会话间彻底隔离，避免专家提示词污染普通新对话） */
+  systemPrompt?: string
 }
 
 export interface MarketAssistant {

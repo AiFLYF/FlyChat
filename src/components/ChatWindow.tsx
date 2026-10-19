@@ -241,6 +241,7 @@ export default function ChatWindow() {
   const setMessageSuggestions = useChatStore((s) => s.setMessageSuggestions)
   const assistants = useChatStore((s) => s.assistants)
   const updateSettings = useChatStore((s) => s.updateSettings)
+  const setConversationSystemPrompt = useChatStore((s) => s.setConversationSystemPrompt)
 
   const setShowSettings = useSettingsOpen((s) => s.setOpen)
   const switchComposer = useComposer((s) => s.switchTo)
@@ -853,9 +854,9 @@ export default function ChatWindow() {
 
   return (
     <div className="relative flex h-full min-w-0 flex-1 flex-col bg-canvas">
-      {/* 顶栏：不画分隔线，只在滚动后浮起一层柔影 —— 少一条硬线，整体就没那么「线框」 */}
+      {/* 顶栏：不画分隔线，只在滚动后浮起一层柔影 —— overflow-hidden 杜绝顶栏撑出横向滚动条 */}
       <header
-        className={`z-20 flex h-14 shrink-0 items-center gap-2 bg-canvas/85 px-4 transition-shadow duration-200 ease-out ${
+        className={`z-20 flex h-14 w-full max-w-full shrink-0 items-center gap-2 overflow-hidden bg-canvas/85 px-4 transition-shadow duration-200 ease-out ${
           scrolled ? 'header-elevated' : ''
         }`}
       >
@@ -863,7 +864,7 @@ export default function ChatWindow() {
           {!sidebarOpen && (
             <button
               onClick={toggleSidebar}
-              className="r-sm press -ml-1 flex h-8 w-8 items-center justify-center text-ink-2 transition-ui hover:bg-hover"
+              className="r-sm press -ml-1 flex h-8 w-8 items-center justify-center text-ink-2 transition-ui hover:bg-hover shrink-0"
               aria-label="展开侧边栏"
             >
               <PanelLeftOpen size={17} />
@@ -871,21 +872,21 @@ export default function ChatWindow() {
           )}
           {/* 顶栏助手与模型导航（对齐截图 6） */}
           <div className="flex items-center gap-1.5 min-w-0">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-medium text-ink-1 bg-panel/60 border border-line-subtle shadow-xs shrink-0">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-medium text-ink-1 bg-panel/60 border border-line-subtle shadow-xs shrink-0 max-w-[140px] sm:max-w-[200px]">
               {currentAssistant ? (
                 <>
-                  <span className="text-sm leading-none">{currentAssistant.emoji || '🤖'}</span>
-                  <span className="max-w-[120px] truncate">{currentAssistant.name}</span>
+                  <span className="text-sm leading-none shrink-0">{currentAssistant.emoji || '🤖'}</span>
+                  <span className="truncate">{currentAssistant.name}</span>
                 </>
               ) : (
                 <>
-                  <span className="text-sm leading-none">💬</span>
-                  <span className="text-ink-2">默认助手</span>
+                  <span className="text-sm leading-none shrink-0">💬</span>
+                  <span className="text-ink-2 truncate">默认助手</span>
                 </>
               )}
             </div>
             <ChevronRight size={13} className="text-ink-4 shrink-0" />
-            <ModelSelector providers={providers} />
+            <ModelSelector providers={providers} align="left" />
           </div>
         </div>
 
@@ -962,7 +963,6 @@ export default function ChatWindow() {
               </div>
             </>
           )}
-          <PresetSelector placement="bottom" />
         </div>
       </header>
 
@@ -1021,20 +1021,6 @@ export default function ChatWindow() {
               </div>
             </div>
 
-            {/* 如果当前智能体/会话已有系统提示词，在空态输入框上方直观呈现 */}
-            {(settings.systemPrompt || currentAssistant?.systemPrompt) && (
-              <div className="anim-fade-up mb-4" style={{ animationDelay: staggerDelay(2, 60) }}>
-                <SystemPromptBanner
-                  systemPrompt={settings.systemPrompt || currentAssistant?.systemPrompt || ''}
-                  assistant={currentAssistant}
-                  onSave={(newPrompt) => {
-                    updateSettings({ systemPrompt: newPrompt })
-                    showToast('已更新角色系统提示词', 'success')
-                  }}
-                />
-              </div>
-            )}
-
             <div className="anim-fade-up" style={{ animationDelay: staggerDelay(3, 60) }}>
               <Composer
                 variant="hero"
@@ -1069,15 +1055,20 @@ export default function ChatWindow() {
             <div ref={captureRef} className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-5 sm:py-8">
               {/* key 绑定会话 id：切换会话即整块淡入，相当于路由转场 */}
               <div key={activeId ?? 'empty'} className="anim-fade-in space-y-7">
-                {/* 消息流顶部常驻角色系统提示词卡片（对齐截图 6） */}
-                <SystemPromptBanner
-                  systemPrompt={settings.systemPrompt || currentAssistant?.systemPrompt || ''}
-                  assistant={currentAssistant}
-                  onSave={(newPrompt) => {
-                    updateSettings({ systemPrompt: newPrompt })
-                    showToast('已更新角色系统提示词', 'success')
-                  }}
-                />
+                {/* 仅在会话真正绑定了智能体或存在专属设定时，在消息流顶部展示设定卡片（对齐截图 6） */}
+                {(active?.systemPrompt || currentAssistant?.systemPrompt) && (
+                  <SystemPromptBanner
+                    systemPrompt={active?.systemPrompt || currentAssistant?.systemPrompt || ''}
+                    assistant={currentAssistant}
+                    onSave={(newPrompt) => {
+                      if (active?.id) {
+                        setConversationSystemPrompt(active.id, newPrompt)
+                      }
+                      updateSettings({ systemPrompt: newPrompt })
+                      showToast('已更新角色系统提示词', 'success')
+                    }}
+                  />
+                )}
 
                 {/* 更早的消息按需加载，避免上百条对话一次全挂载导致卡顿 */}
                 {renderFrom > 0 && (

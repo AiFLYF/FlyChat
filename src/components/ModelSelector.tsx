@@ -21,7 +21,13 @@ function formatContext(tokens?: number) {
 }
 
 /** 顶栏的模型选择器：胶囊触发、可搜索、按提供商分组，支持多模型对比 */
-export default function ModelSelector({ providers }: { providers: ProviderInfo[] }) {
+export default function ModelSelector({
+  providers,
+  align = 'left',
+}: {
+  providers: ProviderInfo[]
+  align?: 'left' | 'right'
+}) {
   const settings = useChatStore((s) => s.settings)
   const updateSettings = useChatStore((s) => s.updateSettings)
   const [open, setOpen] = useState(false)
@@ -87,7 +93,7 @@ export default function ModelSelector({ providers }: { providers: ProviderInfo[]
         // overflow-hidden + 窄屏最大 104px：顶栏还有标题/上下文/导出，给标题留空间。
         // 必须同时截断，否则内容会溢出按钮盒（原先后缀 span 是 shrink-0 且无 truncate，
         // 320px 下会把箭头挤出视口 15px）。
-        className="press hover-lift flex h-8 max-w-[104px] items-center gap-1.5 overflow-hidden rounded-full border border-rule/80 bg-panel px-2.5 text-xs text-ink-2 shadow-1 transition-all hover:bg-hover hover:text-ink-1 hover:border-accent/40 sm:max-w-[220px]"
+        className="press hover-lift flex h-8 max-w-[120px] sm:max-w-[200px] md:max-w-[240px] items-center gap-1.5 overflow-hidden rounded-full border border-rule/80 bg-panel px-2.5 text-xs text-ink-2 shadow-1 transition-all hover:bg-hover hover:text-ink-1 hover:border-accent/40"
       >
         {compareCount > 1 ? (
           <>
@@ -113,8 +119,8 @@ export default function ModelSelector({ providers }: { providers: ProviderInfo[]
 
       <MenuPanel
         open={open}
-        position="absolute right-0 top-10 z-40 w-[min(24rem,calc(100vw-2rem))]"
-        origin="top-right"
+        position={`absolute ${align === 'right' ? 'right-0' : 'left-0'} top-10 z-40 w-[min(24rem,calc(100vw-2rem))]`}
+        origin={align === 'right' ? 'top-right' : 'top-left'}
         label="模型选择"
       >
         <div className="flex items-center gap-2 border-b border-rule p-2">

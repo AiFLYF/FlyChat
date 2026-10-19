@@ -35,6 +35,7 @@ interface ChatState {
   setConversationTags: (id: string, tags: string[]) => void
   setConversationDocumentIds: (id: string, documentIds: string[] | undefined) => void
   setConversationSummary: (id: string, summary: string) => void
+  setConversationSystemPrompt: (id: string, systemPrompt: string) => void
   reorderConversations: (orderedIds: string[]) => void
 
   setFolders: (folders: ConversationFolder[]) => void
@@ -121,6 +122,7 @@ export const useChatStore = create<ChatState>()(
           updatedAt: now,
           usingContext: true,
           assistantId,
+          systemPrompt: assistant?.systemPrompt ?? '',
           sortIndex: minIndex - 1,
         }
         set((s) => ({
@@ -129,12 +131,16 @@ export const useChatStore = create<ChatState>()(
           settings: assistant
             ? {
                 ...s.settings,
-                systemPrompt: assistant.systemPrompt || s.settings.systemPrompt,
+                systemPrompt: assistant.systemPrompt || '',
                 provider: assistant.provider || s.settings.provider,
                 model: assistant.model || s.settings.model,
                 temperature: assistant.temperature ?? s.settings.temperature,
               }
-            : s.settings,
+            : {
+                ...s.settings,
+                // 普通新对话：清空系统提示词，坚决不残留上一个专家的设定
+                systemPrompt: '',
+              },
         }))
         return conv.id
       },
@@ -163,7 +169,31 @@ export const useChatStore = create<ChatState>()(
           ),
         })),
 
-      setActive: (id) => set({ activeId: id }),
+      setActive: (id) => {
+        const state = useChatStore.getState()
+        const conv = state.conversations.find((c) => c.id === id)
+        if (conv) {
+          const assistant = conv.assistantId
+            ? state.assistants.find((a) => a.id === conv.assistantId)
+            : undefined
+          const prompt = conv.systemPrompt ?? assistant?.systemPrompt ?? ''
+          set({
+            activeId: id,
+            settings: {
+              ...state.settings,
+              systemPrompt: prompt,
+            },
+          })
+        } else {
+          set({
+            activeId: id,
+            settings: {
+              ...state.settings,
+              systemPrompt: '',
+            },
+          })
+        }
+      },
 
       togglePin: (id) =>
         set((s) => ({
@@ -245,6 +275,14 @@ export const useChatStore = create<ChatState>()(
           conversations: s.conversations.map((c) =>
             c.id === id ? { ...c, summary, updatedAt: Date.now() } : c
           ),
+        })),
+
+      setConversationSystemPrompt: (id, systemPrompt) =>
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id === id ? { ...c, systemPrompt, updatedAt: Date.now() } : c
+          ),
+          settings: s.activeId === id ? { ...s.settings, systemPrompt } : s.settings,
         })),
 
       reorderConversations: (orderedIds) =>
