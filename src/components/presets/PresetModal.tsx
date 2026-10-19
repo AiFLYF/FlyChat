@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Sliders, X, Globe, Cpu, Wrench } from 'lucide-react'
+import { Sliders, X, Globe, Cpu, Wrench, Palette } from 'lucide-react'
 import { usePresetStore } from '../../store/preset'
 import { useKnowledgeStore } from '../../store/knowledge'
 import { useChatStore } from '../../store/chat'
+import { fetchImageStatus } from '../../api/client'
+import type { ImageStatus } from '../../types'
 import { BUTTON_PRIMARY, FIELD, ICON_BTN_SM } from '../../lib/ui'
 
 export default function PresetModal() {
@@ -25,9 +27,17 @@ export default function PresetModal() {
   const [webSearch, setWebSearch] = useState(false)
   const [thinking, setThinking] = useState(false)
   const [agent, setAgent] = useState(true)
+  const [imageGeneration, setImageGeneration] = useState(false)
+  const [imageStatus, setImageStatus] = useState<ImageStatus | null>(null)
   const [workspaceId, setWorkspaceId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (modalOpen) {
+      fetchImageStatus().then(setImageStatus).catch(() => {})
+    }
+  }, [modalOpen])
 
   useEffect(() => {
     if (editingPreset) {
@@ -42,6 +52,7 @@ export default function PresetModal() {
       setWebSearch(!!editingPreset.params?.webSearch)
       setThinking(!!editingPreset.params?.think)
       setAgent(editingPreset.params?.agent !== false)
+      setImageGeneration(!!editingPreset.params?.imageGeneration)
       setWorkspaceId(editingPreset.workspaceId || '')
     } else {
       // 默认基于当前设置填入
@@ -56,6 +67,7 @@ export default function PresetModal() {
       setWebSearch(currentSettings.webSearch)
       setThinking(currentSettings.thinking)
       setAgent(true)
+      setImageGeneration(!!currentSettings.imageGeneration)
       setWorkspaceId('')
     }
   }, [editingPreset, currentSettings, modalOpen])
@@ -88,6 +100,7 @@ export default function PresetModal() {
           think: thinking,
           agent,
           tools: agent ? true : undefined,
+          imageGeneration: imageStatus?.available ? imageGeneration : false,
         },
       })
     } catch (err: any) {
@@ -222,7 +235,7 @@ export default function PresetModal() {
               <span className="text-xs font-semibold text-ink-1">模型推理与能力开关</span>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-rule bg-panel px-2.5 py-2 text-xs hover:border-accent transition-colors">
                 <input
                   type="checkbox"
@@ -254,6 +267,29 @@ export default function PresetModal() {
                 />
                 <Cpu size={13} className="text-purple-500" />
                 <span>深度思考</span>
+              </label>
+
+              <label
+                className={`flex items-center gap-2 rounded-lg border border-rule bg-panel px-2.5 py-2 text-xs transition-colors ${
+                  !imageStatus?.available
+                    ? 'opacity-50 cursor-not-allowed'
+                    : 'cursor-pointer hover:border-accent'
+                }`}
+                title={
+                  imageStatus?.available
+                    ? `已就绪 (${imageStatus.providerName || imageStatus.provider || '图像服务'}${imageStatus.model ? ' · ' + imageStatus.model : ''})`
+                    : imageStatus?.reason || '尚未配置可用图像模型'
+                }
+              >
+                <input
+                  type="checkbox"
+                  disabled={!imageStatus?.available}
+                  checked={imageStatus?.available ? imageGeneration : false}
+                  onChange={(e) => setImageGeneration(e.target.checked)}
+                  className="rounded text-accent"
+                />
+                <Palette size={13} className="text-pink-500" />
+                <span>AI 绘图</span>
               </label>
             </div>
 

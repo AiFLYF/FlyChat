@@ -28,7 +28,15 @@ import {
 import { useChatStore } from '../store/chat'
 import { useAuthStore } from '../store/auth'
 import { useKnowledgeStore } from '../store/knowledge'
-import { updateConversationMetadata } from '../api/client'
+import {
+  fetchFolders,
+  createFolder as createFolderApi,
+  updateFolder as updateFolderApi,
+  deleteFolder as deleteFolderApi,
+  moveConversationsToFolder,
+  fetchTags,
+  updateConversationMetadata,
+} from '../api/client'
 import { useCommandPaletteOpen, useMarketOpen, useSettingsOpen, useUsageOpen } from './openPanels'
 import { BrandLogo } from './ui/BrandLogo'
 import { staggerDelay } from '../lib/motion'
@@ -37,7 +45,7 @@ import { usePresence } from '../lib/usePresence'
 import { dayBucket } from '../lib/date'
 import { SEARCH_FIELD, ICON_BTN_SM, GROUP_LABEL, EMPTY_HINT } from '../lib/ui'
 import { MenuPanel, MenuItem } from './ui/Menu'
-import type { Conversation, ConversationFolder } from '../types'
+import type { Conversation, ConversationFolder, ServerTagItem } from '../types'
 
 /** 组内排序：有人工拖拽序号时按序号，否则按更新时间 */
 function sortGroup(items: Conversation[]) {
@@ -55,6 +63,7 @@ function ConversationItem({
   onDropOn,
   onDelete,
   folders,
+  onMoveToFolder,
 }: {
   conv: Conversation
   groupIds: string[]
@@ -63,13 +72,13 @@ function ConversationItem({
   onDropOn: (groupIds: string[], targetId: string) => void
   onDelete: (id: string) => void
   folders: ConversationFolder[]
+  onMoveToFolder: (folderId: string | null) => void
 }) {
   const activeId = useChatStore((s) => s.activeId)
   const setActive = useChatStore((s) => s.setActive)
   const renameConversation = useChatStore((s) => s.renameConversation)
   const togglePin = useChatStore((s) => s.togglePin)
   const toggleConversationStar = useChatStore((s) => s.toggleConversationStar)
-  const moveConversationToFolder = useChatStore((s) => s.moveConversationToFolder)
   const setConversationTags = useChatStore((s) => s.setConversationTags)
 
   const [editing, setEditing] = useState(false)
@@ -305,7 +314,7 @@ function ConversationItem({
                 <MenuItem
                   icon={<X size={12} />}
                   onClick={() => {
-                    moveConversationToFolder(conv.id, null)
+                    onMoveToFolder(null)
                     setMenuOpen(false)
                   }}
                 >
@@ -318,7 +327,7 @@ function ConversationItem({
                   icon={<span>{f.emoji || '📁'}</span>}
                   className={conv.folderId === f.id ? 'font-semibold text-accent bg-accent/10' : ''}
                   onClick={() => {
-                    moveConversationToFolder(conv.id, f.id)
+                    onMoveToFolder(f.id)
                     setMenuOpen(false)
                   }}
                 >
@@ -349,6 +358,7 @@ function ConversationItem({
 export default function Sidebar({ open }: { open: boolean }) {
   const conversations = useChatStore((s) => s.conversations)
   const folders = useChatStore((s) => s.folders || [])
+  const setFolders = useChatStore((s) => s.setFolders)
   const createConversation = useChatStore((s) => s.createConversation)
   const createFolder = useChatStore((s) => s.createFolder)
   const updateFolder = useChatStore((s) => s.updateFolder)
@@ -392,6 +402,33 @@ export default function Sidebar({ open }: { open: boolean }) {
   // 正在重命名的文件夹 ID
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
   const [editingFolderName, setEditingFolderName] = useState('')
+  // 服务端全局标签列表
+  const [serverTags, setServerTags] = useState<ServerTagItem[]>([])
+
+  // 挂载时从服务端同步文件夹与全局标签 (Q-2026-10-19-05)
+  useEffect(() => {
+    fetchFolders()
+      .then((res) => {
+        if (res && Array.isArray(res.items)) {
+          const mapped: ConversationFolder[] = res.items.map((it) => ({
+            id: it.id,
+            name: it.name,
+            emoji: it.icon || '📁',
+            createdAt: Date.now(),
+          }))
+          setFolders(mapped)
+        }
+      })
+      .catch(() => {})
+
+    fetchTags()
+      .then((res) => {
+        if (res && Array.isArray(res.items)) {
+          setServerTags(res.items)
+        }
+      })
+      .catch(() => {})
+  }, [setFolders])
 
   useEffect(() => {
     asideRef.current?.toggleAttribute('inert', !open)
@@ -430,18 +467,23 @@ export default function Sidebar({ open }: { open: boolean }) {
   // 选中的标签筛选
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
 
-  // 提取所有标签与计数
+  // 提取全局标签（服务端标签 + 本地会话标签并集）与计数
   const tagCounts = useMemo(() => {
     const counts: Record<string, number> = {}
+    for (const st of serverTags) {
+      counts[st.name] = (counts[st.name] || 0) + st.count
+    }
     for (const c of conversations) {
       if (c.tags) {
         for (const t of c.tags) {
-          counts[t] = (counts[t] || 0) + 1
+          if (!serverTags.some((st) => st.name === t)) {
+            counts[t] = (counts[t] || 0) + 1
+          }
         }
       }
     }
     return Object.entries(counts).map(([tag, count]) => ({ tag, count }))
-  }, [conversations])
+  }, [conversations, serverTags])
 
   // 过滤后的会话（搜索 + 标签筛选）
   const q = query.trim().toLowerCase()
@@ -509,21 +551,58 @@ export default function Sidebar({ open }: { open: boolean }) {
     }))
   }
 
-  const handleCommitNewFolder = () => {
+  const handleCommitNewFolder = async () => {
     const name = folderDraftName.trim()
-    if (name) {
-      createFolder(name)
+    if (!name) {
+      setIsCreatingFolder(false)
+      return
     }
+    const localId = createFolder(name)
     setFolderDraftName('')
     setIsCreatingFolder(false)
+    try {
+      const serverFolder = await createFolderApi({ name, icon: '📁' })
+      if (serverFolder?.id && serverFolder.id !== localId) {
+        useChatStore.setState((s) => ({
+          folders: s.folders.map((f) => (f.id === localId ? { ...f, id: serverFolder.id } : f)),
+          conversations: s.conversations.map((c) =>
+            c.folderId === localId ? { ...c, folderId: serverFolder.id } : c
+          ),
+        }))
+      }
+    } catch (err) {
+      console.warn('同步创建文件夹到服务端失败:', err)
+    }
   }
 
   const handleCommitRenameFolder = (id: string) => {
     const name = editingFolderName.trim()
     if (name) {
       updateFolder(id, { name })
+      void updateFolderApi(id, { name }).catch(() => {})
     }
     setEditingFolderId(null)
+  }
+
+  const handleDeleteFolder = (folder: ConversationFolder) => {
+    if (confirm(`确定删除文件夹「${folder.name}」吗？里面的对话会移到未分类，不会被删除。`)) {
+      deleteFolder(folder.id)
+      void deleteFolderApi(folder.id).catch(() => {})
+    }
+  }
+
+  const handleMoveConversation = async (convId: string, folderId: string | null) => {
+    moveConversationToFolder(convId, folderId)
+    // 后端契约：移出文件夹必须传 'none'，不能传空串
+    const target = folderId || 'none'
+    try {
+      await Promise.all([
+        moveConversationsToFolder(target, [convId]),
+        updateConversationMetadata(convId, { folderId: folderId ?? null }),
+      ])
+    } catch (e) {
+      console.warn('同步移动会话失败:', e)
+    }
   }
 
   return (
@@ -713,6 +792,7 @@ export default function Sidebar({ open }: { open: boolean }) {
                   onDropOn={handleDropOn}
                   onDelete={handleDelete}
                   folders={folders}
+                  onMoveToFolder={(folderId) => handleMoveConversation(conv.id, folderId)}
                 />
               ))}
             </div>
@@ -733,7 +813,7 @@ export default function Sidebar({ open }: { open: boolean }) {
               onDrop={(e) => {
                 e.preventDefault()
                 if (dragId.current) {
-                  moveConversationToFolder(dragId.current, folder.id)
+                  handleMoveConversation(dragId.current, folder.id)
                   dragId.current = null
                 }
               }}
@@ -784,11 +864,7 @@ export default function Sidebar({ open }: { open: boolean }) {
                     <Pencil size={11} />
                   </button>
                   <button
-                    onClick={() => {
-                      if (confirm(`确定删除文件夹「${folder.name}」吗？对话将移出文件夹。`)) {
-                        deleteFolder(folder.id)
-                      }
-                    }}
+                    onClick={() => handleDeleteFolder(folder)}
                     className={`${ICON_BTN_SM} hover:text-danger`}
                     title="删除文件夹"
                   >
@@ -815,6 +891,7 @@ export default function Sidebar({ open }: { open: boolean }) {
                         onDropOn={handleDropOn}
                         onDelete={handleDelete}
                         folders={folders}
+                        onMoveToFolder={(folderId) => handleMoveConversation(conv.id, folderId)}
                       />
                     ))
                   )}
@@ -860,6 +937,7 @@ export default function Sidebar({ open }: { open: boolean }) {
                       onDropOn={handleDropOn}
                       onDelete={handleDelete}
                       folders={folders}
+                      onMoveToFolder={(folderId) => handleMoveConversation(conv.id, folderId)}
                     />
                   ))}
                 </div>

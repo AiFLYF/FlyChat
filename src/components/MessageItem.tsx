@@ -22,7 +22,7 @@ import {
   Wand2,
   X,
 } from 'lucide-react'
-import { generateTaskRewrite } from '../api/client'
+import { generateTaskRewrite, fetchTasksInfo } from '../api/client'
 import MarkdownRenderer from './MarkdownRenderer'
 import ReasoningBlock from './ReasoningBlock'
 import Citations from './Citations'
@@ -100,6 +100,28 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
+const TONE_LABELS: Record<string, string> = {
+  concise: '更简洁',
+  formal: '更正式',
+  casual: '更口语',
+  expand: '更详细',
+  polish: '润色优化',
+  translate: '译为英文',
+  translate_zh: '译为中文',
+}
+
+const DEFAULT_TONES = [
+  { key: 'concise', label: '更简洁', instruction: '删掉冗余修饰与重复表达，保留全部关键信息。' },
+  { key: 'formal', label: '更正式', instruction: '更正式、更书面化，适合写在文档或邮件里。' },
+  { key: 'casual', label: '更口语', instruction: '更口语、更自然，像面对面聊天。' },
+  { key: 'expand', label: '更详细', instruction: '扩写得更详细，补充必要的解释与例子。' },
+  { key: 'polish', label: '润色优化', instruction: '修正语病、让表达更通顺，意思不要变。' },
+  { key: 'translate', label: '译为英文', instruction: '翻译成英文，保持原意与语气。' },
+  { key: 'translate_zh', label: '译为中文', instruction: '翻译成简体中文，保持原意与语气。' },
+]
+
+let cachedTones: { key: string; label: string; instruction: string }[] | null = null
+
 const MessageItem = memo(function MessageItem({
   message,
   streaming,
@@ -119,9 +141,28 @@ const MessageItem = memo(function MessageItem({
   const [rewriteMenuOpen, setRewriteMenuOpen] = useState(false)
   const [rewriting, setRewriting] = useState(false)
   const [rewriteResult, setRewriteResult] = useState<string | null>(null)
+  const [tones, setTones] = useState(() => cachedTones || DEFAULT_TONES)
   const rewriteRef = useRef<HTMLDivElement>(null)
   useDismiss(rewriteRef, () => setRewriteMenuOpen(false), rewriteMenuOpen)
   const enterCls = enter ? 'anim-fade-up ' : ''
+
+  useEffect(() => {
+    if (rewriteMenuOpen && !cachedTones) {
+      fetchTasksInfo()
+        .then((res) => {
+          if (res?.tones && res.tones.length > 0) {
+            const mapped = res.tones.map((t) => ({
+              key: t.key,
+              label: TONE_LABELS[t.key] || t.key,
+              instruction: t.instruction,
+            }))
+            cachedTones = mapped
+            setTones(mapped)
+          }
+        })
+        .catch(() => {})
+    }
+  }, [rewriteMenuOpen])
 
   // ---------- 用户消息 ----------
   if (isUser) {
@@ -383,18 +424,11 @@ const MessageItem = memo(function MessageItem({
               </IconButton>
               {rewriteMenuOpen && (
                 <div className="absolute bottom-full left-0 mb-1 w-36 rounded-xl border border-rule bg-panel p-1 shadow-3 z-30 text-xs anim-fade-up">
-                  {[
-                    { key: 'concise', label: '更简洁' },
-                    { key: 'formal', label: '更正式' },
-                    { key: 'casual', label: '更口语' },
-                    { key: 'expand', label: '更详细' },
-                    { key: 'polish', label: '润色优化' },
-                    { key: 'translate', label: '译为英文' },
-                    { key: 'translate_zh', label: '译为中文' },
-                  ].map((tone) => (
+                  {tones.map((tone) => (
                     <button
                       key={tone.key}
                       type="button"
+                      title={tone.instruction}
                       disabled={rewriting}
                       onClick={async () => {
                         setRewriteMenuOpen(false)

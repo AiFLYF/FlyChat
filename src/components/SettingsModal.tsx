@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Bot, Download, Moon, Monitor, Plus, RotateCcw, Sparkles, Sun, Trash2, Upload } from 'lucide-react'
 import { useChatStore } from '../store/chat'
 import { useSettingsOpen } from './openPanels'
-import { fetchProviders } from '../api/client'
+import { fetchProviders, fetchImageStatus } from '../api/client'
 import { downloadJson } from '../lib/download'
 import { uid } from '../lib/id'
 import { formatBytes } from '../lib/files'
@@ -15,7 +15,7 @@ import Modal from './ui/Modal'
 import ProviderManager from './ProviderManager'
 import McpSettings from './mcp/McpSettings'
 import ApiGatewaySettings from './ApiGatewaySettings'
-import type { Assistant, Conversation, PromptItem, ProviderInfo, ThemeMode } from '../types'
+import type { Assistant, Conversation, PromptItem, ProviderInfo, ThemeMode, ImageStatus } from '../types'
 
 const THEME_OPTIONS: { value: ThemeMode; label: string; icon: React.ReactNode }[] = [
   { value: 'light', label: '浅色', icon: <Sun size={13} /> },
@@ -236,6 +236,7 @@ export default function SettingsModal() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [webSearchAvailable, setWebSearchAvailable] = useState(false)
+  const [imageStatus, setImageStatus] = useState<ImageStatus | null>(null)
   const [customModel, setCustomModel] = useState('')
   const [promptPreset, setPromptPreset] = useState('')
   const [newPromptTitle, setNewPromptTitle] = useState('')
@@ -246,13 +247,14 @@ export default function SettingsModal() {
   const [tab, setTab] = useState<'general' | 'providers' | 'mcp' | 'api' | 'prompts' | 'data'>('general')
 
   /**
-   * 拉取服务商列表。抽成独立函数是因为「模型服务」面板增删改之后要重新拉取，
+   * 拉取服务商列表与图像模型状态。抽成独立函数是因为「模型服务」面板增删改之后要重新拉取，
    * 并且必须处理「当前选中的服务商被删掉」的情况——否则聊天会一直报未配置。
    */
   const loadProviders = useCallback(async () => {
     const { providers: list, webSearch } = await fetchProviders()
     setProviders(list)
     setWebSearchAvailable(webSearch)
+    void fetchImageStatus().then(setImageStatus).catch(() => {})
     if (list.length === 0) return
     const current = useChatStore.getState().settings
     if (!list.some((p) => p.id === current.provider)) {
@@ -530,6 +532,17 @@ export default function SettingsModal() {
                   hint="新会话默认携带历史消息"
                   checked={settings.usingContext}
                   onChange={(v) => updateSettings({ usingContext: v })}
+                />
+                <ToggleRow
+                  label="AI 图像生成"
+                  hint={
+                    imageStatus?.available
+                      ? `已就绪 (${imageStatus.providerName || imageStatus.provider || '图像服务'}${imageStatus.model ? ' · ' + imageStatus.model : ''})`
+                      : imageStatus?.reason || '尚未配置可用图像模型（请在模型服务中配置或检查服务端）'
+                  }
+                  checked={imageStatus?.available ? !!settings.imageGeneration : false}
+                  disabled={!imageStatus?.available}
+                  onChange={(v) => updateSettings({ imageGeneration: v })}
                 />
               </div>
             </Section>

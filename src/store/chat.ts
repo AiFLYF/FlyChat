@@ -37,6 +37,7 @@ interface ChatState {
   setConversationSummary: (id: string, summary: string) => void
   reorderConversations: (orderedIds: string[]) => void
 
+  setFolders: (folders: ConversationFolder[]) => void
   createFolder: (name: string, emoji?: string, color?: string) => string
   updateFolder: (id: string, patch: Partial<ConversationFolder>) => void
   deleteFolder: (id: string) => void
@@ -175,6 +176,8 @@ export const useChatStore = create<ChatState>()(
             c.id === id ? { ...c, starred: !c.starred, updatedAt: Date.now() } : c
           ),
         })),
+
+      setFolders: (folders) => set({ folders }),
 
       createFolder: (name, emoji = '📁', color = 'blue') => {
         const id = uid()
