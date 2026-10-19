@@ -118,7 +118,19 @@ export default function PresetSelector({ placement = 'top' }: PresetSelectorProp
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     <span className="text-sm shrink-0">{preset.icon || '🤖'}</span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium">{preset.name}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="truncate font-medium">{preset.name}</p>
+                        {preset.params?.vision && (
+                          <span className="rounded bg-emerald-500/15 px-1 py-0.2 text-[9px] font-medium text-emerald-600 dark:text-emerald-400">
+                            识图
+                          </span>
+                        )}
+                        {preset.params?.think && (
+                          <span className="rounded bg-purple-500/15 px-1 py-0.2 text-[9px] font-medium text-purple-600 dark:text-purple-400">
+                            思考
+                          </span>
+                        )}
+                      </div>
                       {preset.description && (
                         <p className="text-[10px] text-ink-4 truncate">{preset.description}</p>
                       )}

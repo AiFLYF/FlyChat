@@ -266,7 +266,7 @@ export default function Composer({
           />
 
           <Pill
-            label="上传图片或文档"
+            label="上传图片识图或文档（支持截图直接 Ctrl+V 粘贴）"
             disabled={disabled || uploading}
             onClick={() => fileRef.current?.click()}
           >

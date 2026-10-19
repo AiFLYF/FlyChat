@@ -342,6 +342,8 @@ export interface PresetParams {
   tools?: boolean | string[]
   topK?: number
   imageGeneration?: boolean
+  /** 图像理解与视觉识别 (Vision) */
+  vision?: boolean
   mcpMode?: 'all' | 'selected'
 }
 

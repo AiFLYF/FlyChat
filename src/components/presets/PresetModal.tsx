@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Sliders, X, Globe, Cpu, Wrench, Palette } from 'lucide-react'
+import { Sliders, X, Globe, Cpu, Wrench, Palette, Eye } from 'lucide-react'
 import { usePresetStore } from '../../store/preset'
 import { useKnowledgeStore } from '../../store/knowledge'
 import { useChatStore } from '../../store/chat'
@@ -27,6 +27,7 @@ export default function PresetModal() {
   const [webSearch, setWebSearch] = useState(false)
   const [thinking, setThinking] = useState(false)
   const [agent, setAgent] = useState(true)
+  const [vision, setVision] = useState(true)
   const [imageGeneration, setImageGeneration] = useState(false)
   const [imageStatus, setImageStatus] = useState<ImageStatus | null>(null)
   const [workspaceId, setWorkspaceId] = useState('')
@@ -52,6 +53,7 @@ export default function PresetModal() {
       setWebSearch(!!editingPreset.params?.webSearch)
       setThinking(!!editingPreset.params?.think)
       setAgent(editingPreset.params?.agent !== false)
+      setVision(editingPreset.params?.vision !== false)
       setImageGeneration(!!editingPreset.params?.imageGeneration)
       setWorkspaceId(editingPreset.workspaceId || '')
     } else {
@@ -100,6 +102,7 @@ export default function PresetModal() {
           think: thinking,
           agent,
           tools: agent ? true : undefined,
+          vision,
           imageGeneration: imageStatus?.available ? imageGeneration : false,
         },
       })
@@ -267,6 +270,20 @@ export default function PresetModal() {
                 />
                 <Cpu size={13} className="text-purple-500" />
                 <span>深度思考</span>
+              </label>
+
+              <label
+                className="flex cursor-pointer items-center gap-2 rounded-lg border border-rule bg-panel px-2.5 py-2 text-xs hover:border-accent transition-colors"
+                title="开启后支持图片上传、截图粘贴识别与多模态视觉理解（需多模态视觉模型支持）"
+              >
+                <input
+                  type="checkbox"
+                  checked={vision}
+                  onChange={(e) => setVision(e.target.checked)}
+                  className="rounded text-accent"
+                />
+                <Eye size={13} className="text-emerald-500" />
+                <span>图像理解</span>
               </label>
 
               <label
