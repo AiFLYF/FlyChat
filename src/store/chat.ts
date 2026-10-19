@@ -112,9 +112,10 @@ export const useChatStore = create<ChatState>()(
           (min, c) => (typeof c.sortIndex === 'number' ? Math.min(min, c.sortIndex) : min),
           0
         )
+        const convTitle = assistant ? `${assistant.emoji} ${assistant.name}` : '新对话'
         const conv: Conversation = {
           id: uid(),
-          title: '新对话',
+          title: convTitle,
           messages: [],
           createdAt: now,
           updatedAt: now,
@@ -128,6 +129,7 @@ export const useChatStore = create<ChatState>()(
           settings: assistant
             ? {
                 ...s.settings,
+                systemPrompt: assistant.systemPrompt || s.settings.systemPrompt,
                 provider: assistant.provider || s.settings.provider,
                 model: assistant.model || s.settings.model,
                 temperature: assistant.temperature ?? s.settings.temperature,

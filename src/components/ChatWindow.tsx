@@ -2,14 +2,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown,
+  Check,
+  ChevronRight,
   Columns3,
   Download,
   FileJson,
   FileText,
   Image as ImageIcon,
   PanelLeftOpen,
+  Pencil,
   Repeat,
   RotateCw,
+  Sparkles,
   X,
 } from 'lucide-react'
 import { useChatStore, uid } from '../store/chat'
@@ -41,7 +45,101 @@ import { useKnowledgeStore } from '../store/knowledge'
 import { BrandIcon } from './ui/BrandLogo'
 import { ConstellationHero } from './ui/BrandGraphic'
 import { showToast } from './ui/Toast'
-import type { Attachment, Conversation, Message, MessageVariant, ProviderInfo } from '../types'
+import type { Assistant, Attachment, Conversation, Message, MessageVariant, ProviderInfo } from '../types'
+
+/** 消息流顶部常驻展示与编辑当前智能体系统提示词 (System Prompt) */
+function SystemPromptBanner({
+  systemPrompt,
+  assistant,
+  onSave,
+}: {
+  systemPrompt: string
+  assistant?: Assistant | null
+  onSave: (newPrompt: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(systemPrompt)
+
+  useEffect(() => {
+    setDraft(systemPrompt)
+  }, [systemPrompt])
+
+  if (!editing && !systemPrompt) {
+    return null
+  }
+
+  return (
+    <div className="group relative mb-6 rounded-2xl border border-rule/70 bg-panel/75 p-3.5 sm:p-4 shadow-xs backdrop-blur-sm transition-all hover:border-line hover:shadow-1">
+      {editing ? (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-ink-1">
+              <Sparkles size={14} className="text-accent" />
+              <span>编辑角色系统提示词 (System Prompt)</span>
+              {assistant && (
+                <span className="text-[11px] text-ink-3">· {assistant.emoji} {assistant.name}</span>
+              )}
+            </div>
+            <span className="text-[11px] text-ink-3">{draft.length} 字</span>
+          </div>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={4}
+            placeholder="为当前对话或智能体设定角色扮演人设、回答风格、特定限制..."
+            className="w-full resize-y rounded-xl border border-rule/80 bg-canvas/90 p-3 text-xs leading-relaxed text-ink-1 placeholder:text-ink-4 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent font-sans"
+            autoFocus
+          />
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(systemPrompt)
+                setEditing(false)
+              }}
+              className="press r-sm px-3 py-1.5 text-xs text-ink-3 hover:bg-hover hover:text-ink-1 transition-ui"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onSave(draft.trim())
+                setEditing(false)
+              }}
+              className="press r-sm flex items-center gap-1 bg-accent px-3.5 py-1.5 text-xs font-medium text-on-accent transition-ui hover-lift"
+            >
+              <Check size={13} />
+              <span>保存设定</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div
+          onClick={() => setEditing(true)}
+          className="flex cursor-pointer items-start justify-between gap-3 text-xs text-ink-2"
+          title="点击编辑系统提示词"
+        >
+          <div className="flex-1 whitespace-pre-wrap leading-relaxed select-text font-normal text-ink-2">
+            {systemPrompt}
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setEditing(true)
+            }}
+            className="press flex shrink-0 items-center gap-1 rounded-lg border border-rule/60 bg-hover/40 px-2 py-1 text-[11px] text-ink-3 opacity-80 group-hover:opacity-100 hover:border-accent/40 hover:text-accent transition-all"
+            title="修改设定"
+          >
+            <Pencil size={11} />
+            <span className="hidden sm:inline">修改</span>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface Target {
   provider: string
@@ -141,6 +239,8 @@ export default function ChatWindow() {
   const switchMessageVariant = useChatStore((s) => s.switchMessageVariant)
   const appendGeneratedImages = useChatStore((s) => s.appendGeneratedImages)
   const setMessageSuggestions = useChatStore((s) => s.setMessageSuggestions)
+  const assistants = useChatStore((s) => s.assistants)
+  const updateSettings = useChatStore((s) => s.updateSettings)
 
   const setShowSettings = useSettingsOpen((s) => s.setOpen)
   const switchComposer = useComposer((s) => s.switchTo)
@@ -173,6 +273,9 @@ export default function ChatWindow() {
   const titledRef = useRef<Set<string>>(new Set())
 
   const active = conversations.find((c) => c.id === activeId) ?? null
+  const currentAssistant = active?.assistantId
+    ? assistants.find((a) => a.id === active.assistantId)
+    : null
   const streaming = streamingIds.length > 0
   /** 空态（无消息）标记 */
   const empty = !active || active.messages.length === 0
@@ -766,12 +869,24 @@ export default function ChatWindow() {
               <PanelLeftOpen size={17} />
             </button>
           )}
-          <h1
-            key={active?.id ?? 'brand'}
-            className="anim-fade-in truncate text-[15px] font-medium text-ink-1"
-          >
-            {active && !empty ? active.title : 'FlyChat'}
-          </h1>
+          {/* 顶栏助手与模型导航（对齐截图 6） */}
+          <div className="flex items-center gap-1.5 min-w-0">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-medium text-ink-1 bg-panel/60 border border-line-subtle shadow-xs shrink-0">
+              {currentAssistant ? (
+                <>
+                  <span className="text-sm leading-none">{currentAssistant.emoji || '🤖'}</span>
+                  <span className="max-w-[120px] truncate">{currentAssistant.name}</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-sm leading-none">💬</span>
+                  <span className="text-ink-2">默认助手</span>
+                </>
+              )}
+            </div>
+            <ChevronRight size={13} className="text-ink-4 shrink-0" />
+            <ModelSelector providers={providers} />
+          </div>
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -847,12 +962,7 @@ export default function ChatWindow() {
               </div>
             </>
           )}
-          {!empty && (
-            <div className="flex items-center gap-1.5">
-              <ModelSelector providers={providers} />
-              <PresetSelector placement="bottom" />
-            </div>
-          )}
+          <PresetSelector placement="bottom" />
         </div>
       </header>
 
@@ -911,6 +1021,20 @@ export default function ChatWindow() {
               </div>
             </div>
 
+            {/* 如果当前智能体/会话已有系统提示词，在空态输入框上方直观呈现 */}
+            {(settings.systemPrompt || currentAssistant?.systemPrompt) && (
+              <div className="anim-fade-up mb-4" style={{ animationDelay: staggerDelay(2, 60) }}>
+                <SystemPromptBanner
+                  systemPrompt={settings.systemPrompt || currentAssistant?.systemPrompt || ''}
+                  assistant={currentAssistant}
+                  onSave={(newPrompt) => {
+                    updateSettings({ systemPrompt: newPrompt })
+                    showToast('已更新角色系统提示词', 'success')
+                  }}
+                />
+              </div>
+            )}
+
             <div className="anim-fade-up" style={{ animationDelay: staggerDelay(3, 60) }}>
               <Composer
                 variant="hero"
@@ -945,6 +1069,16 @@ export default function ChatWindow() {
             <div ref={captureRef} className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-5 sm:py-8">
               {/* key 绑定会话 id：切换会话即整块淡入，相当于路由转场 */}
               <div key={activeId ?? 'empty'} className="anim-fade-in space-y-7">
+                {/* 消息流顶部常驻角色系统提示词卡片（对齐截图 6） */}
+                <SystemPromptBanner
+                  systemPrompt={settings.systemPrompt || currentAssistant?.systemPrompt || ''}
+                  assistant={currentAssistant}
+                  onSave={(newPrompt) => {
+                    updateSettings({ systemPrompt: newPrompt })
+                    showToast('已更新角色系统提示词', 'success')
+                  }}
+                />
+
                 {/* 更早的消息按需加载，避免上百条对话一次全挂载导致卡顿 */}
                 {renderFrom > 0 && (
                   <button

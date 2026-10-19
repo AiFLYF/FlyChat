@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Terminal,
   Trash2,
+  Sparkles,
 } from 'lucide-react'
 import { useAuthStore } from '../store/auth'
 import { createApiToken, revokeApiToken } from '../api/client'
@@ -131,6 +132,22 @@ for chunk in response:
               注：在服务端可在 <code className="font-mono text-ink-2">server/.env</code> 中配置 <code className="font-mono text-ink-2">FLYCHAT_ACCESS_TOKEN</code>；在多用户模式下，请使用下方生成的个人访问令牌 (PAT)。
             </p>
           </div>
+        </div>
+
+        {/* 智能体与预设直接调用说明 */}
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3.5 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+              <Sparkles size={14} />
+              <span>调用我的智能体 / 预设</span>
+            </div>
+          </div>
+          <p className="text-xs text-ink-2 leading-relaxed">
+            API 网关原生支持直接调用您配置好的智能体预设！只需将请求参数中的 <code className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">"model"</code> 填写为 <code className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">"preset:&lt;预设ID&gt;"</code>（例如 <code className="font-mono">"preset:coding-master"</code>）。
+          </p>
+          <p className="text-[11px] text-ink-3">
+            网关将自动注入该智能体的<b>专属系统提示词 (System Prompt)、指定模型、温度与工具设定</b>，第三方客户端直接享有完整垂直能力！您可通过 <code className="font-mono text-ink-2">GET /v1/models</code> 列出所有可用模型与智能体。
+          </p>
         </div>
 
         {/* 个人访问令牌 (PAT) 模块 (Q-2026-10-19-09) */}
