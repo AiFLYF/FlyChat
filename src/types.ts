@@ -403,6 +403,7 @@ export interface WorkspaceItem {
 
 export type DocumentStage =
   | '已入队'
+  | '抓取网页'
   | '解析文件'
   | '切块'
   | '向量化'
@@ -416,6 +417,7 @@ export interface DocumentItem {
   id: string
   workspaceId: string
   name: string
+  sourceUrl?: string
   mime?: string
   size?: number
   chars?: number

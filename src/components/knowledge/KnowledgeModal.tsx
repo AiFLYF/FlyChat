@@ -3,7 +3,9 @@ import {
   AlertCircle,
   BookOpen,
   CheckCircle2,
+  ExternalLink,
   FileText,
+  Globe,
   Loader2,
   Plus,
   RotateCw,
@@ -33,6 +35,9 @@ export default function KnowledgeModal() {
   const [showNewWs, setShowNewWs] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [urlInput, setUrlInput] = useState('')
+  const [addingUrl, setAddingUrl] = useState(false)
+  const [urlError, setUrlError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -80,6 +85,22 @@ export default function KnowledgeModal() {
     await createWorkspace(newWsName.trim())
     setNewWsName('')
     setShowNewWs(false)
+  }
+
+  const handleAddUrl = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const targetUrl = urlInput.trim()
+    if (!targetUrl) return
+    setUrlError(null)
+    setAddingUrl(true)
+    try {
+      await upload({ url: targetUrl })
+      setUrlInput('')
+    } catch (err: any) {
+      setUrlError(err.message || '添加网页失败')
+    } finally {
+      setAddingUrl(false)
+    }
   }
 
   return (
@@ -204,6 +225,42 @@ export default function KnowledgeModal() {
 
           {/* 右侧：文档上传与异步流水线列表 */}
           <div className="flex-1 overflow-y-auto p-4 flex flex-col space-y-3">
+            {/* 抓取网页链接入库 */}
+            <div className="rounded-xl border border-rule bg-hover-soft p-3">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-ink-2 mb-2">
+                <Globe size={14} className="text-accent" />
+                <span>添加网页链接</span>
+                <span className="text-[10px] font-normal text-ink-4">（自动抓取正文、去标签并切块向量化）</span>
+              </div>
+              <form onSubmit={handleAddUrl} className="flex gap-2">
+                <input
+                  type="url"
+                  value={urlInput}
+                  onChange={(e) => {
+                    setUrlInput(e.target.value)
+                    if (urlError) setUrlError(null)
+                  }}
+                  placeholder="https://example.com/article..."
+                  className={`${FIELD} flex-1 py-1.5 text-xs`}
+                  disabled={addingUrl}
+                />
+                <button
+                  type="submit"
+                  disabled={addingUrl || !urlInput.trim()}
+                  className="flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50 shrink-0"
+                >
+                  {addingUrl ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                  添加
+                </button>
+              </form>
+              {urlError && (
+                <p className="mt-1.5 flex items-center gap-1 text-[11px] text-danger">
+                  <AlertCircle size={11} className="shrink-0" />
+                  <span>{urlError}</span>
+                </p>
+              )}
+            </div>
+
             {/* 上传拖拽区 */}
             <div
               onDragOver={(e) => {
@@ -227,7 +284,7 @@ export default function KnowledgeModal() {
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".txt,.md,.markdown,.pdf,.docx,.doc,.json"
+                accept=".txt,.md,.markdown,.pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.html,.htm,.json,.csv"
                 className="hidden"
                 onChange={(e) => handleFiles(e.target.files)}
               />
@@ -236,7 +293,7 @@ export default function KnowledgeModal() {
                 点击上传或将文档拖拽至此
               </p>
               <p className="mt-0.5 text-[11px] text-ink-4">
-                支持 TXT, Markdown, PDF, Word (docx), JSON 等文本格式
+                支持 TXT, Markdown, PDF, Word, PPTX, Excel, HTML, JSON 等格式
               </p>
             </div>
 
@@ -272,9 +329,27 @@ export default function KnowledgeModal() {
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                            <FileText size={16} className="text-ink-3 shrink-0 mt-0.5" />
+                            {doc.sourceUrl ? (
+                              <Globe size={16} className="text-accent shrink-0 mt-0.5" />
+                            ) : (
+                              <FileText size={16} className="text-ink-3 shrink-0 mt-0.5" />
+                            )}
                             <div className="min-w-0 flex-1">
-                              <p className="text-xs font-medium text-ink-1 truncate">{doc.name}</p>
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <p className="text-xs font-medium text-ink-1 truncate">{doc.name}</p>
+                                {doc.sourceUrl && (
+                                  <a
+                                    href={doc.sourceUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-ink-4 hover:text-accent shrink-0 inline-flex items-center"
+                                    title={`在新标签页打开原网页: ${doc.sourceUrl}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <ExternalLink size={12} />
+                                  </a>
+                                )}
+                              </div>
                               <div className="mt-1 flex items-center gap-2 text-[11px] text-ink-4">
                                 {isReady && (
                                   <>
@@ -291,7 +366,7 @@ export default function KnowledgeModal() {
                                 {isProcessing && (
                                   <span className="flex items-center gap-1 text-accent">
                                     <Loader2 size={12} className="animate-spin" />
-                                    {doc.stage || '正在处理'} ({doc.progress}%)
+                                    {doc.stage === '抓取网页' ? '正在抓取网页正文…' : (doc.stage || '正在处理')} ({doc.progress}%)
                                   </span>
                                 )}
                                 {isFailed && (

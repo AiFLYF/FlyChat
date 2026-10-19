@@ -599,10 +599,11 @@ export async function fetchDocuments(workspaceId?: string): Promise<{ items: Doc
 
 export async function uploadDocument(data: {
   workspaceId?: string
-  name: string
+  name?: string
   mime?: string
   dataUrl?: string
   text?: string
+  url?: string
   size?: number
 }): Promise<DocumentItem & { duplicate?: boolean; documentId?: string }> {
   return await postJson('/api/documents', data)

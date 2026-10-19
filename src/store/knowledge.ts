@@ -26,10 +26,11 @@ interface KnowledgeState {
   loadDocuments: (workspaceId?: string) => Promise<void>
   upload: (data: {
     workspaceId?: string
-    name: string
+    name?: string
     mime?: string
     dataUrl?: string
     text?: string
+    url?: string
     size?: number
   }) => Promise<DocumentItem>
   retry: (id: string) => Promise<void>
@@ -107,10 +108,11 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const newDoc: DocumentItem = {
       id: res.id,
       workspaceId: wsId,
-      name: res.name || data.name,
+      name: res.name || data.name || data.url || '新文档',
+      sourceUrl: res.sourceUrl || data.url,
       status: res.status || 'pending',
-      stage: res.stage || '已入队',
-      progress: res.progress ?? 0,
+      stage: res.stage || (data.url ? '抓取网页' : '已入队'),
+      progress: res.progress ?? (data.url ? 5 : 0),
       attempts: 1,
       createdAt: Date.now(),
       updatedAt: Date.now(),
