@@ -9,6 +9,7 @@ import {
   Image as ImageIcon,
   PanelLeftOpen,
   Repeat,
+  RotateCw,
   X,
 } from 'lucide-react'
 import { useChatStore, uid } from '../store/chat'
@@ -63,32 +64,40 @@ const CATEGORY_PROMPTS = [
     category: '代码开发',
     icon: '💻',
     items: [
-      { title: '实现分布式限流器', desc: '用令牌桶算法设计 Node.js / Redis 限流中间件' },
-      { title: '重构 React 性能热点', desc: '诊断长列表卡顿并给出优化方案' },
+      { title: '实现分布式限流器', desc: '用令牌桶算法设计 Node.js / Redis 限流中间件', tag: '架构设计' },
+      { title: '重构 React 性能热点', desc: '诊断长列表卡顿并给出 useMemo/虚拟滚动优化方案', tag: '前端性能' },
+      { title: '编写异步并发任务队列', desc: '支持并发度控制、指数退避重试与结果汇总', tag: '算法并发' },
+      { title: 'SQL 慢查询性能调优', desc: '联合索引、执行计划 (EXPLAIN) 分析与覆盖索引设计', tag: '数据库' },
     ],
   },
   {
     category: '创意策划',
     icon: '✍️',
     items: [
-      { title: '撰写商业产品发布文案', desc: '富有感染力与科技未来感的极简风格文案' },
-      { title: '科幻小说世界观设定', desc: '围绕戴森球、意识上传与星际跃迁的深度大纲' },
+      { title: '撰写商业产品发布文案', desc: '富有感染力与科技未来感的极简风格文案', tag: '文案营销' },
+      { title: '科幻小说世界观设定', desc: '围绕戴森球、意识上传与星际跃迁的深度大纲', tag: '世界观' },
+      { title: '技术产品全网宣发排期', desc: '包含知乎、X、ProductHunt 与 GitHub 社区节奏', tag: '增长推广' },
+      { title: 'TED 风格演说演讲大纲', desc: '以「人工智能对创造力的重构」为题的启发式演讲', tag: '演讲表达' },
     ],
   },
   {
     category: '商业洞察',
     icon: '📊',
     items: [
-      { title: 'SaaS 产品定价策略', desc: '从免费增值到企业席位制的转化漏斗分析' },
-      { title: '竞品核心差异化分析', desc: '构建多维技术壁垒与用户体验矩阵' },
+      { title: 'SaaS 产品定价策略', desc: '从免费增值到企业席位制的转化漏斗分析', tag: '商业模式' },
+      { title: '竞品核心差异化分析', desc: '构建多维技术壁垒与用户体验矩阵', tag: '竞争战略' },
+      { title: '出海合规与数据安全审查', desc: 'GDPR 隐私保护、支付链路与跨境数据出境准则', tag: '合规出海' },
+      { title: 'B 端销售漏斗转化分析', desc: '从 MQL 到 SQL 再到最终签约的各环节流失归因', tag: '企业销售' },
     ],
   },
   {
     category: '深度推理',
     icon: '🔬',
     items: [
-      { title: '推导自注意力机制', desc: '从矩阵乘法、缩放点积到多头注意力全流程详解' },
-      { title: '复杂系统根因排查法', desc: '高可用微服务雪崩故障的排查树与止血策略' },
+      { title: '推导自注意力机制', desc: '从矩阵乘法、缩放点积到多头注意力全流程详解', tag: '数学推导' },
+      { title: '复杂系统根因排查法', desc: '高可用微服务雪崩故障的排查树与止血策略', tag: '稳定性' },
+      { title: '博弈论经典难题推演', desc: '纳什均衡、重复囚徒困境与机制设计的数学建模', tag: '决策博弈' },
+      { title: '分布式共识算法对比', desc: '深入对比 Paxos, Raft 与 PBFT 的安全边界与选主条件', tag: '分布式' },
     ],
   },
 ]
@@ -142,6 +151,7 @@ export default function ChatWindow() {
   const [exportOpen, setExportOpen] = useState(false)
   const [shareTarget, setShareTarget] = useState<Message | null>(null)
   const [activeCategory, setActiveCategory] = useState<number>(0)
+  const [shuffleSeed, setShuffleSeed] = useState<number>(0)
   /** 主区是否已滚动：决定顶栏是否浮起 */
   const [scrolled, setScrolled] = useState(false)
 
@@ -639,43 +649,70 @@ export default function ChatWindow() {
 
       {/* 结构化分类灵感卡片 */}
       <div className="mt-5 px-1">
-        <div className="flex items-center justify-center gap-1.5 mb-3 overflow-x-auto pb-1">
-          {CATEGORY_PROMPTS.map((cat, idx) => (
-            <button
-              key={cat.category}
-              type="button"
-              onClick={() => setActiveCategory(idx)}
-              className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs transition-all ${
-                activeCategory === idx
-                  ? 'bg-panel font-medium text-accent border border-accent/20 shadow-sm'
-                  : 'text-ink-3 hover:text-ink-1 hover:bg-hover'
-              }`}
-            >
-              <span>{cat.icon}</span>
-              <span>{cat.category}</span>
-            </button>
-          ))}
+        <div className="flex items-center justify-between gap-1.5 mb-3">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            {CATEGORY_PROMPTS.map((cat, idx) => (
+              <button
+                key={cat.category}
+                type="button"
+                onClick={() => {
+                  setActiveCategory(idx)
+                  setShuffleSeed(0)
+                }}
+                className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs transition-all ${
+                  activeCategory === idx
+                    ? 'bg-panel font-medium text-accent border border-accent/20 shadow-sm'
+                    : 'text-ink-3 hover:text-ink-1 hover:bg-hover'
+                }`}
+              >
+                <span>{cat.icon}</span>
+                <span>{cat.category}</span>
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShuffleSeed((s) => s + 1)}
+            title="换一批灵感"
+            className="flex shrink-0 items-center gap-1 text-[11px] text-ink-3 hover:text-accent transition-colors px-1.5 py-0.5 rounded-md hover:bg-hover"
+          >
+            <RotateCw size={11} />
+            <span className="hidden sm:inline">换一组</span>
+          </button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {CATEGORY_PROMPTS[activeCategory].items.map((item, i) => (
-            <button
-              key={item.title}
-              onClick={() => fillComposer(`${item.title}\n${item.desc}`)}
-              style={{ animationDelay: staggerDelay(i, 40) }}
-              className="anim-fade-up group flex flex-col text-left rounded-xl border border-rule/70 bg-panel/80 p-3 hover:border-accent hover:bg-panel hover:shadow-2 transition-all"
-            >
-              <div className="text-xs font-semibold text-ink-1 group-hover:text-accent transition-colors flex items-center justify-between">
-                <span>{item.title}</span>
-                <span className="opacity-0 group-hover:opacity-100 text-[10px] text-accent transition-opacity">
-                  填充 ↵
-                </span>
-              </div>
-              <div className="mt-1 text-[11px] leading-relaxed text-ink-3 line-clamp-2">
-                {item.desc}
-              </div>
-            </button>
-          ))}
+          {(() => {
+            const allItems = CATEGORY_PROMPTS[activeCategory].items
+            const offset = (shuffleSeed * 2) % allItems.length
+            const displayItems = [allItems[offset], allItems[(offset + 1) % allItems.length]]
+            return displayItems.map((item, i) => (
+              <button
+                key={`${item.title}-${shuffleSeed}`}
+                onClick={() => fillComposer(`${item.title}\n${item.desc}`)}
+                style={{ animationDelay: staggerDelay(i, 40) }}
+                className="anim-fade-up group flex flex-col text-left rounded-xl border border-rule/70 bg-panel/80 p-3 hover:border-accent hover:bg-panel hover:shadow-2 transition-all relative overflow-hidden"
+              >
+                <div className="text-xs font-semibold text-ink-1 group-hover:text-accent transition-colors flex items-center justify-between gap-2">
+                  <span className="truncate">{item.title}</span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {item.tag && (
+                      <span className="rounded bg-hover px-1.5 py-0.5 text-[9px] font-normal text-ink-4 group-hover:text-accent group-hover:bg-accent/10 transition-colors">
+                        {item.tag}
+                      </span>
+                    )}
+                    <span className="opacity-0 group-hover:opacity-100 text-[10px] text-accent transition-opacity">
+                      ↵
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-1 text-[11px] leading-relaxed text-ink-3 line-clamp-2">
+                  {item.desc}
+                </div>
+              </button>
+            ))
+          })()}
         </div>
       </div>
     </>

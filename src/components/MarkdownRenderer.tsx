@@ -123,8 +123,16 @@ const CodeBlock = memo(function CodeBlock({
     <div className="group/code my-4 overflow-hidden rounded-xl bg-panel shadow-1 border border-rule/70 transition-shadow duration-200 ease-out hover:shadow-2">
       {/* 工具栏 */}
       <div className="flex items-center justify-between bg-hover-soft px-3 py-1.5 border-b border-rule/50">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-mono text-ink-3 uppercase">{language || 'text'}</span>
+        <div className="flex items-center gap-2.5">
+          {/* macOS 终端三色控制点 */}
+          <div className="flex items-center gap-1.5 select-none" aria-hidden="true">
+            <span className="h-2.5 w-2.5 rounded-full bg-rose-500/80 inline-block" />
+            <span className="h-2.5 w-2.5 rounded-full bg-amber-500/80 inline-block" />
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/80 inline-block" />
+          </div>
+          <span className="rounded bg-panel/80 px-1.5 py-0.5 text-[10px] font-mono font-medium text-ink-3 uppercase border border-rule/40 tracking-wider">
+            {language || 'text'}
+          </span>
           {isPreviewable && (
             <div className="flex items-center rounded-lg bg-canvas p-0.5 border border-rule/60 text-[11px]">
               <button

@@ -319,6 +319,22 @@ export default function Composer({
 
           <div className="ml-auto" />
 
+          {/* 当有输入内容时，提供快速清空草稿按钮与字数计数器 */}
+          {text.trim().length > 0 && (
+            <div className="flex items-center gap-1.5 mr-1 text-[11px] text-ink-4">
+              <span className="font-mono text-[10px] tracking-tight">{text.length} 字</span>
+              <button
+                type="button"
+                onClick={clear}
+                title="清空输入"
+                aria-label="清空输入"
+                className="text-ink-4 hover:text-ink-2 p-1 rounded transition-colors"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
           {streaming ? (
             <button
               onClick={onStop}
