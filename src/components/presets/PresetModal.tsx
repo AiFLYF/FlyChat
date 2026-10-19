@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Check, Sliders, Sparkles, X, Globe, Cpu, Wrench } from 'lucide-react'
+import { Sliders, X, Globe, Cpu, Wrench } from 'lucide-react'
 import { usePresetStore } from '../../store/preset'
 import { useKnowledgeStore } from '../../store/knowledge'
 import { useChatStore } from '../../store/chat'
 import { BUTTON_PRIMARY, FIELD, ICON_BTN_SM } from '../../lib/ui'
-import type { Preset } from '../../types'
 
 export default function PresetModal() {
   const modalOpen = usePresetStore((s) => s.modalOpen)

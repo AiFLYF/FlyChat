@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { Check, Code2, Copy, ExternalLink, Globe, KeyRound, Terminal } from 'lucide-react'
-import { BUTTON_GHOST, ICON_BTN_SM } from '../lib/ui'
+import { Check, Code2, Copy, Globe, Terminal } from 'lucide-react'
 
 export default function ApiGatewaySettings() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null)

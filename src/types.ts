@@ -47,6 +47,7 @@ export interface MessageVariant {
   sources?: KnowledgeSource[]
   toolCalls?: ToolCall[]
   toolResults?: ToolResult[]
+  modelSwitch?: { from: string; to: string; reason?: string }
   usage?: TokenUsage
 }
 
@@ -244,6 +245,10 @@ export interface Settings {
   webSearch: boolean
   /** 深度思考：引导模型先推理再作答 */
   thinking: boolean
+  /** 智能体工具调用 (Agent / MCP) */
+  tools?: boolean
+  /** 关联知识库工作区 ID */
+  workspaceId?: string
   /** 默认是否携带上下文 */
   usingContext: boolean
 }
@@ -425,13 +430,16 @@ export interface DocumentItem {
 }
 
 export interface KnowledgeSource {
-  index: number
-  title: string
-  documentId: string
-  documentName: string
+  index?: number
+  title?: string
+  documentId?: string
+  documentName?: string
   heading?: string
-  snippet: string
+  snippet?: string
+  content?: string
   score?: number
+  similarity?: number
+  chunkIndex?: number
 }
 
 /* =========================================================================
@@ -441,13 +449,16 @@ export interface KnowledgeSource {
 export interface ToolCall {
   id: string
   name: string
-  arguments: Record<string, unknown>
+  arguments: Record<string, unknown> | string
+  status?: 'running' | 'done' | 'error'
 }
 
 export interface ToolResult {
   id: string
-  name: string
-  ok: boolean
+  name?: string
+  ok?: boolean
   preview?: string
+  result?: unknown
+  error?: string
 }
 

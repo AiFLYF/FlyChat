@@ -121,7 +121,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     }))
 
     // 启动 800ms 轮询流水线
-    pollDocStatus(newDoc.id, set, get)
+    pollDocStatus(newDoc.id, set)
     return newDoc
   },
 
@@ -132,7 +132,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
         d.id === id ? { ...d, status: 'pending', stage: '已入队', progress: 5, error: undefined } : d
       ),
     }))
-    pollDocStatus(id, set, get)
+    pollDocStatus(id, set)
   },
 
   removeDocument: async (id) => {
@@ -162,8 +162,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
 /** 单条文档状态 800ms 轮询器 */
 async function pollDocStatus(
   id: string,
-  set: (fn: (s: KnowledgeState) => Partial<KnowledgeState>) => void,
-  get: () => KnowledgeState
+  set: (fn: (s: KnowledgeState) => Partial<KnowledgeState>) => void
 ) {
   if (activePolls.has(id)) return
   activePolls.add(id)

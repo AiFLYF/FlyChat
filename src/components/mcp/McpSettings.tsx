@@ -1,10 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
-  AlertTriangle,
-  Check,
   ChevronDown,
   ChevronRight,
-  ExternalLink,
   Plus,
   RefreshCw,
   Server,

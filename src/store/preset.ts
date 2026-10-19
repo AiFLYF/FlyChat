@@ -22,7 +22,7 @@ interface PresetState {
   duplicatePreset: (id: string, name?: string) => Promise<Preset>
 }
 
-export const usePresetStore = create<PresetState>((set, get) => ({
+export const usePresetStore = create<PresetState>((set) => ({
   presets: [],
   activePresetId: null,
   loading: false,

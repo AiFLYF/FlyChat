@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { KeyRound, Lock, Shield, User, X } from 'lucide-react'
+import { useState } from 'react'
+import { KeyRound, Lock, User, X } from 'lucide-react'
 import { useAuthStore } from '../../store/auth'
 import { FIELD, BUTTON_PRIMARY, ICON_BTN_SM } from '../../lib/ui'
 import { BrandLogo } from '../ui/BrandLogo'

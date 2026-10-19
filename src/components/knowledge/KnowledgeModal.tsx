@@ -3,19 +3,16 @@ import {
   AlertCircle,
   BookOpen,
   CheckCircle2,
-  Database,
   FileText,
-  FolderPlus,
   Loader2,
   Plus,
-  RefreshCw,
   RotateCw,
   Trash2,
   Upload,
   X,
 } from 'lucide-react'
 import { useKnowledgeStore } from '../../store/knowledge'
-import { BUTTON_PRIMARY, FIELD, ICON_BTN_SM } from '../../lib/ui'
+import { FIELD, ICON_BTN_SM } from '../../lib/ui'
 
 export default function KnowledgeModal() {
   const modalOpen = useKnowledgeStore((s) => s.modalOpen)
@@ -25,7 +22,6 @@ export default function KnowledgeModal() {
   const setActiveWorkspaceId = useKnowledgeStore((s) => s.setActiveWorkspaceId)
   const status = useKnowledgeStore((s) => s.status)
   const documents = useKnowledgeStore((s) => s.documents)
-  const loading = useKnowledgeStore((s) => s.loading)
   const loadAll = useKnowledgeStore((s) => s.loadAll)
   const upload = useKnowledgeStore((s) => s.upload)
   const retry = useKnowledgeStore((s) => s.retry)

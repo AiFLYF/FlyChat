@@ -4,9 +4,7 @@ import {
   Copy,
   Plus,
   Sliders,
-  Sparkles,
   Trash2,
-  X,
 } from 'lucide-react'
 import { usePresetStore } from '../../store/preset'
 import { useDismiss } from '../../lib/useDismiss'
