@@ -86,6 +86,10 @@ export interface Message {
   parentId?: string
   /** 同一轮多模型对比分组标识 */
   groupId?: string
+  /** 模型生成的图片（Q-2026-10-19-10） */
+  generatedImages?: { url?: string; dataUrl?: string; revisedPrompt?: string }[]
+  /** 任务模型生成的追问建议 chips（Q-2026-10-19-06） */
+  suggestions?: string[]
   /** token 用量 */
   usage?: TokenUsage
   /** 服务端返回的流式元数据（上下文与压缩指标） */
@@ -187,6 +191,10 @@ export interface Conversation {
   usingContext?: boolean
   /** 绑定的助手 id */
   assistantId?: string
+  /** 限定知识库文档提问 (Q-2026-10-19-07) */
+  documentIds?: string[]
+  /** 会话总结摘要 (Q-2026-10-19-06) */
+  summary?: string
 }
 
 export interface MarketAssistant {
@@ -247,6 +255,8 @@ export interface Settings {
   thinking: boolean
   /** 智能体工具调用 (Agent / MCP) */
   tools?: boolean
+  /** 是否开启图像生成能力 (Q-2026-10-19-10) */
+  imageGeneration?: boolean
   /** 关联知识库工作区 ID */
   workspaceId?: string
   /** 默认是否携带上下文 */
@@ -292,6 +302,8 @@ export interface AuthUser {
   displayName?: string
   role: UserRole
   disabled?: boolean
+  hasApiToken?: boolean
+  authVia?: 'cookie' | 'token' | null
   lastLoginAt?: number
   createdAt?: number
 }
@@ -305,6 +317,7 @@ export interface AuthConfig {
     knowledge?: boolean
     mcp?: boolean
     presets?: boolean
+    image?: boolean
     [key: string]: boolean | undefined
   }
 }
@@ -328,6 +341,7 @@ export interface PresetParams {
   agent?: boolean
   tools?: boolean | string[]
   topK?: number
+  imageGeneration?: boolean
   mcpMode?: 'all' | 'selected'
 }
 
@@ -463,4 +477,69 @@ export interface ToolResult {
   result?: unknown
   error?: string
 }
+
+/* =========================================================================
+   服务端会话文件夹与标签 (Q-2026-10-19-05)
+   ========================================================================= */
+
+export interface ServerFolderItem {
+  id: string
+  name: string
+  icon?: string
+  count?: number
+  sortIndex?: number
+}
+
+export interface ServerTagItem {
+  name: string
+  count: number
+}
+
+/* =========================================================================
+   小任务接口与改写风格 (Q-2026-10-19-06)
+   ========================================================================= */
+
+export interface TaskToneItem {
+  key: string
+  instruction: string
+}
+
+/* =========================================================================
+   知识库多维打分诊断视图 (Q-2026-10-19-07)
+   ========================================================================= */
+
+export interface RetrieveDebugCandidate {
+  id: string
+  documentName: string
+  seq: number
+  heading?: string
+  preview?: string
+  score: number
+  vectorScore: number
+  keywordScore: number
+  phraseScore: number
+  headingScore: number
+  picked: boolean
+  belowThreshold: boolean
+}
+
+export interface RetrieveDebugResult {
+  totalChunks: number
+  passedThreshold: number
+  vectorUsed: boolean
+  candidates: RetrieveDebugCandidate[]
+}
+
+/* =========================================================================
+   图像生成服务能力 (Q-2026-10-19-10)
+   ========================================================================= */
+
+export interface ImageStatus {
+  available: boolean
+  provider?: string
+  providerName?: string
+  model?: string
+  reason?: string
+}
+
 

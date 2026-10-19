@@ -32,6 +32,9 @@ interface ChatState {
   toggleConversationStar: (id: string) => void
   setUsingContext: (id: string, value: boolean) => void
   setConversationAssistant: (id: string, assistantId: string | undefined) => void
+  setConversationTags: (id: string, tags: string[]) => void
+  setConversationDocumentIds: (id: string, documentIds: string[] | undefined) => void
+  setConversationSummary: (id: string, summary: string) => void
   reorderConversations: (orderedIds: string[]) => void
 
   createFolder: (name: string, emoji?: string, color?: string) => string
@@ -42,6 +45,12 @@ interface ChatState {
   addMessage: (conversationId: string, message: Message) => void
   appendToMessage: (conversationId: string, messageId: string, text: string) => void
   appendReasoning: (conversationId: string, messageId: string, text: string) => void
+  appendGeneratedImages: (
+    conversationId: string,
+    messageId: string,
+    images: { url?: string; dataUrl?: string; revisedPrompt?: string }[]
+  ) => void
+  setMessageSuggestions: (conversationId: string, messageId: string, suggestions: string[]) => void
   updateMessage: (conversationId: string, messageId: string, patch: Partial<Message>) => void
   toggleMessageStar: (conversationId: string, messageId: string) => void
   switchMessageVariant: (conversationId: string, messageId: string, variantIndex: number) => void
@@ -212,6 +221,27 @@ export const useChatStore = create<ChatState>()(
           ),
         })),
 
+      setConversationTags: (id, tags) =>
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id === id ? { ...c, tags, updatedAt: Date.now() } : c
+          ),
+        })),
+
+      setConversationDocumentIds: (id, documentIds) =>
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id === id ? { ...c, documentIds, updatedAt: Date.now() } : c
+          ),
+        })),
+
+      setConversationSummary: (id, summary) =>
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id === id ? { ...c, summary, updatedAt: Date.now() } : c
+          ),
+        })),
+
       reorderConversations: (orderedIds) =>
         set((s) => ({
           conversations: s.conversations.map((c) => {
@@ -262,6 +292,40 @@ export const useChatStore = create<ChatState>()(
                   ...c,
                   messages: c.messages.map((m) =>
                     m.id === messageId ? { ...m, reasoning: (m.reasoning ?? '') + text } : m
+                  ),
+                }
+          ),
+        })),
+
+      appendGeneratedImages: (conversationId, messageId, images) =>
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id !== conversationId
+              ? c
+              : {
+                  ...c,
+                  updatedAt: Date.now(),
+                  messages: c.messages.map((m) =>
+                    m.id === messageId
+                      ? {
+                          ...m,
+                          generatedImages: [...(m.generatedImages || []), ...images],
+                        }
+                      : m
+                  ),
+                }
+          ),
+        })),
+
+      setMessageSuggestions: (conversationId, messageId, suggestions) =>
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id !== conversationId
+              ? c
+              : {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === messageId ? { ...m, suggestions } : m
                   ),
                 }
           ),

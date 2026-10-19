@@ -1,4 +1,3 @@
-// deslop-ignore-file 04 19 — 全站仅一个强调色；2px 激活指示条用圆头属常规控件细节
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
@@ -17,6 +16,7 @@ import {
   Settings,
   Sparkles,
   Star,
+  Tag,
   Trash2,
   Undo2,
   X,
@@ -28,6 +28,7 @@ import {
 import { useChatStore } from '../store/chat'
 import { useAuthStore } from '../store/auth'
 import { useKnowledgeStore } from '../store/knowledge'
+import { updateConversationMetadata } from '../api/client'
 import { useCommandPaletteOpen, useMarketOpen, useSettingsOpen, useUsageOpen } from './openPanels'
 import { BrandLogo } from './ui/BrandLogo'
 import { staggerDelay } from '../lib/motion'
@@ -69,9 +70,12 @@ function ConversationItem({
   const togglePin = useChatStore((s) => s.togglePin)
   const toggleConversationStar = useChatStore((s) => s.toggleConversationStar)
   const moveConversationToFolder = useChatStore((s) => s.moveConversationToFolder)
+  const setConversationTags = useChatStore((s) => s.setConversationTags)
 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(conv.title)
+  const [tagEditing, setTagEditing] = useState(false)
+  const [tagDraft, setTagDraft] = useState((conv.tags || []).join(' '))
   const [dragOver, setDragOver] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -85,6 +89,16 @@ function ConversationItem({
     const title = draft.trim()
     if (title && title !== conv.title) renameConversation(conv.id, title)
     setEditing(false)
+  }
+
+  const commitTags = () => {
+    const parsed = tagDraft
+      .split(/[\s,，]+/)
+      .map((t) => t.replace(/^#/, '').trim())
+      .filter(Boolean)
+    setConversationTags(conv.id, parsed)
+    void updateConversationMetadata(conv.id, { tags: parsed }).catch(() => {})
+    setTagEditing(false)
   }
 
   if (editing) {
@@ -107,6 +121,35 @@ function ConversationItem({
         </button>
         <button onClick={() => setEditing(false)} className={ICON_BTN_SM} aria-label="取消">
           <X size={14} />
+        </button>
+      </div>
+    )
+  }
+
+  if (tagEditing) {
+    return (
+      <div
+        className="flex items-center gap-1 rounded-lg bg-hover px-2 py-1.5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Tag size={12} className="text-accent shrink-0" />
+        <input
+          autoFocus
+          value={tagDraft}
+          onChange={(e) => setTagDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitTags()
+            if (e.key === 'Escape') setTagEditing(false)
+          }}
+          onBlur={commitTags}
+          placeholder="标签（空格或逗号分隔）..."
+          className="min-w-0 flex-1 bg-transparent text-[11px] text-ink-1 outline-none"
+        />
+        <button onClick={commitTags} className={ICON_BTN_SM} aria-label="确认">
+          <Check size={12} />
+        </button>
+        <button onClick={() => setTagEditing(false)} className={ICON_BTN_SM} aria-label="取消">
+          <X size={12} />
         </button>
       </div>
     )
@@ -154,8 +197,22 @@ function ConversationItem({
           active ? 'scale-y-100' : 'scale-y-0'
         }`}
       />
-      <MessageSquare size={14} className="shrink-0 text-ink-3" />
-      <span className="min-w-0 flex-1 truncate">{conv.title}</span>
+      <MessageSquare size={14} className="shrink-0 text-ink-3 mt-0.5 self-start" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate">{conv.title}</div>
+        {conv.tags && conv.tags.length > 0 && (
+          <div className="mt-0.5 flex flex-wrap gap-1">
+            {conv.tags.map((t) => (
+              <span
+                key={t}
+                className="rounded bg-hover px-1 py-0.2 text-[9px] text-ink-3"
+              >
+                #{t}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* 常驻指示徽标 */}
       {conv.pinned && (
@@ -167,6 +224,20 @@ function ConversationItem({
 
       {/* 操作区：hover 或 键盘聚焦时显现 */}
       <span className="hidden shrink-0 items-center gap-0.5 transition-opacity duration-150 group-hover:flex group-focus-within:flex">
+        {/* 标签管理 */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            setTagDraft((conv.tags || []).join(' '))
+            setTagEditing(true)
+          }}
+          className={`${ICON_BTN_SM} ${conv.tags && conv.tags.length > 0 ? 'text-accent' : ''}`}
+          aria-label="管理标签"
+          title="管理标签"
+        >
+          <Tag size={12} />
+        </button>
+
         {/* 收藏开关 */}
         <button
           onClick={(e) => {
@@ -356,16 +427,34 @@ export default function Sidebar({ open }: { open: boolean }) {
     reorderConversations(ids)
   }
 
-  // 过滤后的会话
+  // 选中的标签筛选
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
+
+  // 提取所有标签与计数
+  const tagCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const c of conversations) {
+      if (c.tags) {
+        for (const t of c.tags) {
+          counts[t] = (counts[t] || 0) + 1
+        }
+      }
+    }
+    return Object.entries(counts).map(([tag, count]) => ({ tag, count }))
+  }, [conversations])
+
+  // 过滤后的会话（搜索 + 标签筛选）
   const q = query.trim().toLowerCase()
   const filtered = useMemo(() => {
-    if (!q) return conversations
-    return conversations.filter(
-      (c) =>
+    return conversations.filter((c) => {
+      if (selectedTag && !c.tags?.includes(selectedTag)) return false
+      if (!q) return true
+      return (
         c.title.toLowerCase().includes(q) ||
         c.messages.some((m) => m.content.toLowerCase().includes(q))
-    )
-  }, [conversations, q])
+      )
+    })
+  }, [conversations, q, selectedTag])
 
   // 已收藏的会话
   const starredConversations = useMemo(() => {
@@ -472,6 +561,35 @@ export default function Sidebar({ open }: { open: boolean }) {
             className={`${SEARCH_FIELD} py-2`}
           />
         </div>
+
+        {/* 标签快捷筛选栏 */}
+        {tagCounts.length > 0 && (
+          <div className="flex items-center gap-1 overflow-x-auto py-0.5 scrollbar-none text-[11px]">
+            <button
+              onClick={() => setSelectedTag(null)}
+              className={`rounded-full px-2 py-0.5 whitespace-nowrap transition-colors ${
+                selectedTag === null
+                  ? 'bg-accent text-white font-medium shadow-xs'
+                  : 'bg-hover text-ink-3 hover:text-ink-1'
+              }`}
+            >
+              全部
+            </button>
+            {tagCounts.map(({ tag, count }) => (
+              <button
+                key={tag}
+                onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}
+                className={`rounded-full px-2 py-0.5 whitespace-nowrap transition-colors ${
+                  selectedTag === tag
+                    ? 'bg-accent text-white font-medium shadow-xs'
+                    : 'bg-hover text-ink-3 hover:text-ink-1'
+                }`}
+              >
+                #{tag} <span className="opacity-70 text-[9px]">({count})</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* 新对话 + 助手选择 */}
         <div className="relative flex gap-1.5" ref={assistantRef}>

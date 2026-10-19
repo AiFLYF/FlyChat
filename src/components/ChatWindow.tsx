@@ -19,6 +19,7 @@ import {
   completeOnce,
   fetchProviders,
   generateServerTitle,
+  generateTaskSuggestions,
   streamChat,
   syncConversationToServer,
   type ChatMessagePayload,
@@ -137,6 +138,8 @@ export default function ChatWindow() {
   const setUsingContext = useChatStore((s) => s.setUsingContext)
   const toggleMessageStar = useChatStore((s) => s.toggleMessageStar)
   const switchMessageVariant = useChatStore((s) => s.switchMessageVariant)
+  const appendGeneratedImages = useChatStore((s) => s.appendGeneratedImages)
+  const setMessageSuggestions = useChatStore((s) => s.setMessageSuggestions)
 
   const setShowSettings = useSettingsOpen((s) => s.setOpen)
   const switchComposer = useComposer((s) => s.switchTo)
@@ -327,13 +330,16 @@ export default function ChatWindow() {
             webSearch: settings.webSearch,
             thinking: settings.thinking,
             tools: settings.tools !== false,
+            imageGeneration: settings.imageGeneration,
             presetId: activePreset?.id,
             workspaceId: activeWorkspaceId,
+            documentIds: conversation?.documentIds,
             conversationId,
             onDelta: (text) => appendToMessage(conversationId, assistantId, text),
             onReasoning: (text) => appendReasoning(conversationId, assistantId, text),
             onCitations: (citations) => updateMessage(conversationId, assistantId, { citations }),
             onSources: (sources) => updateMessage(conversationId, assistantId, { sources }),
+            onImage: (evt) => appendGeneratedImages(conversationId, assistantId, evt.images),
             onToolCall: (tc) => {
               const currentMsg = useChatStore
                 .getState()
@@ -393,6 +399,22 @@ export default function ChatWindow() {
           variants: currentVariants.length > 1 ? currentVariants : undefined,
           currentVariantIndex: currentVariants.length > 1 ? currentVariants.length - 1 : 0,
         })
+
+        // 自动拉取追问建议 (Q-2026-10-19-06)
+        if (!controller.signal.aborted && finishedMsg?.content) {
+          generateTaskSuggestions({
+            messages: [
+              ...history.map((m) => ({ role: m.role, content: m.content })),
+              { role: 'assistant', content: finishedMsg.content },
+            ],
+          })
+            .then((res) => {
+              if (res.suggestions && res.suggestions.length > 0) {
+                setMessageSuggestions(conversationId, assistantId, res.suggestions)
+              }
+            })
+            .catch(() => {})
+        }
       } catch (err) {
         const aborted =
           controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')
@@ -949,6 +971,7 @@ export default function ChatWindow() {
                                 onShare={(msg) => setShareTarget(msg)}
                                 onToggleStar={(messageId) => active && toggleMessageStar(active.id, messageId)}
                                 onSwitchVariant={(messageId, idx) => active && switchMessageVariant(active.id, messageId, idx)}
+                                onPickSuggestion={(s) => handleSend(s, [])}
                               />
                             </div>
                           ))}
@@ -973,6 +996,7 @@ export default function ChatWindow() {
                       onShare={(msg) => setShareTarget(msg)}
                       onToggleStar={(messageId) => active && toggleMessageStar(active.id, messageId)}
                       onSwitchVariant={(messageId, idx) => active && switchMessageVariant(active.id, messageId, idx)}
+                      onPickSuggestion={(s) => handleSend(s, [])}
                     />
                   )
                 })}

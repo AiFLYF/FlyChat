@@ -7,6 +7,7 @@ import type {
   Conversation,
   CustomProviderInput,
   DocumentItem,
+  ImageStatus,
   KnowledgeSource,
   KnowledgeStatus,
   McpServer,
@@ -14,11 +15,15 @@ import type {
   Message,
   Preset,
   ProviderInfo,
+  RetrieveDebugResult,
   Role,
+  ServerFolderItem,
   ServerModelInfo,
+  ServerTagItem,
   ServerUsageSummary,
   Settings,
   ShareResponse,
+  TaskToneItem,
   TokenUsage,
   ToolCall,
   ToolResult,
@@ -51,10 +56,14 @@ export interface StreamParams {
   presetId?: string
   /** 绑定的知识库 Workspace ID */
   workspaceId?: string
+  /** 限定检索文档 IDs (Q-2026-10-19-07) */
+  documentIds?: string[]
   /** 消息树父节点 ID */
   parentId?: string
   /** 会话 ID */
   conversationId?: string
+  /** 模型图像生成工具调用开关 (Q-2026-10-19-10) */
+  imageGeneration?: boolean
   onDelta: (text: string) => void
   onReasoning?: (text: string) => void
   onCitations?: (citations: Citation[]) => void
@@ -64,6 +73,11 @@ export interface StreamParams {
   onModelSwitch?: (switchInfo: { from: string; to: string; reason?: string }) => void
   onUsage?: (usage: TokenUsage) => void
   onNotice?: (message: string) => void
+  onImage?: (event: {
+    images: { url?: string; dataUrl?: string; revisedPrompt?: string }[]
+    prompt?: string
+    model?: string
+  }) => void
   onMeta?: (meta: NonNullable<import('../types').Message['meta']>) => void
 }
 
@@ -81,14 +95,17 @@ export async function streamChat(params: StreamParams, signal?: AbortSignal): Pr
     onModelSwitch,
     onUsage,
     onNotice,
+    onImage,
     webSearch,
     thinking,
     agent,
     tools,
     presetId,
     workspaceId,
+    documentIds,
     parentId,
     conversationId,
+    imageGeneration,
   } = params
 
   const res = await fetch('/api/chat', {
@@ -109,8 +126,10 @@ export async function streamChat(params: StreamParams, signal?: AbortSignal): Pr
       tools: tools !== undefined ? tools : agent ? true : undefined,
       presetId: presetId || undefined,
       workspaceId: workspaceId || undefined,
+      documentIds: documentIds && documentIds.length > 0 ? documentIds : undefined,
       parentId: parentId || undefined,
       conversationId: conversationId || undefined,
+      imageGeneration: !!imageGeneration,
     }),
     signal,
   })
@@ -160,6 +179,7 @@ export async function streamChat(params: StreamParams, signal?: AbortSignal): Pr
         else if (evt.type === 'model_switch') onModelSwitch?.(evt)
         else if (evt.type === 'usage' && evt.usage) onUsage?.(evt.usage)
         else if (evt.type === 'notice' && evt.message) onNotice?.(evt.message)
+        else if (evt.type === 'image') onImage?.(evt)
         else if (evt.type === 'meta') {
           params.onMeta?.({
             model: evt.model,
@@ -339,15 +359,19 @@ export async function generateServerTitle(
   provider?: string,
   model?: string
 ): Promise<string> {
-  const res = await fetch('/api/title', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, provider, model }),
-  })
-  if (!res.ok) throw new Error('服务端标题生成失败')
-  const json = await res.json()
-  return json.title || '新对话'
+  try {
+    const res = await postJson<{ title?: string }>('/api/tasks/title', { messages, provider, model })
+    return res.title || '新对话'
+  } catch {
+    const res = await fetch('/api/title', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages, provider, model }),
+    })
+    const json = await res.json().catch(() => ({}))
+    return json.title || '新对话'
+  }
 }
 
 export async function createShareLink(
@@ -620,3 +644,159 @@ export async function retryDocument(id: string): Promise<{ ok: boolean }> {
 export async function deleteDocument(id: string): Promise<{ ok: boolean }> {
   return await postJson(`/api/documents/${encodeURIComponent(id)}`, undefined, 'DELETE')
 }
+
+/* =========================================================================
+   会话文件夹与标签 API (Q-2026-10-19-05)
+   ========================================================================= */
+
+export async function fetchFolders(): Promise<{ items: ServerFolderItem[] }> {
+  return await getJson<{ items: ServerFolderItem[] }>('/api/folders')
+}
+
+export async function createFolder(data: {
+  name: string
+  icon?: string
+  sortIndex?: number
+}): Promise<ServerFolderItem> {
+  return await postJson<ServerFolderItem>('/api/folders', data)
+}
+
+export async function updateFolder(
+  id: string,
+  patch: Partial<{ name: string; icon: string; sortIndex: number }>
+): Promise<ServerFolderItem> {
+  return await postJson<ServerFolderItem>(`/api/folders/${encodeURIComponent(id)}`, patch, 'PATCH')
+}
+
+export async function deleteFolder(id: string): Promise<{ ok: boolean; moved: number }> {
+  return await postJson<{ ok: boolean; moved: number }>(
+    `/api/folders/${encodeURIComponent(id)}`,
+    undefined,
+    'DELETE'
+  )
+}
+
+export async function moveConversationsToFolder(
+  folderId: string,
+  conversationIds: string[]
+): Promise<{ ok: boolean; moved: number }> {
+  return await postJson<{ ok: boolean; moved: number }>(
+    `/api/folders/${encodeURIComponent(folderId)}/move`,
+    { conversationIds }
+  )
+}
+
+export async function fetchTags(): Promise<{ items: ServerTagItem[] }> {
+  return await getJson<{ items: ServerTagItem[] }>('/api/tags')
+}
+
+export async function updateConversationMetadata(
+  id: string,
+  patch: { folderId?: string | null; tags?: string[]; summary?: string }
+): Promise<{ ok: boolean }> {
+  return await postJson<{ ok: boolean }>(
+    `/api/conversations/${encodeURIComponent(id)}`,
+    patch,
+    'PATCH'
+  )
+}
+
+/* =========================================================================
+   小任务接口 API (Q-2026-10-19-06)
+   ========================================================================= */
+
+export async function fetchTasksInfo(): Promise<{ kinds: string[]; tones: TaskToneItem[] }> {
+  return await getJson<{ kinds: string[]; tones: TaskToneItem[] }>('/api/tasks')
+}
+
+export async function generateTaskTitle(params: {
+  text?: string
+  messages?: { role: Role; content: string }[]
+  maxChars?: number
+  provider?: string
+  model?: string
+}): Promise<{ title: string }> {
+  return await postJson<{ title: string }>('/api/tasks/title', params)
+}
+
+export async function generateTaskSummary(params: {
+  text?: string
+  messages?: { role: Role; content: string }[]
+}): Promise<{ summary: string }> {
+  return await postJson<{ summary: string }>('/api/tasks/summary', params)
+}
+
+export async function generateTaskSuggestions(params: {
+  text?: string
+  messages?: { role: Role; content: string }[]
+}): Promise<{ suggestions: string[] }> {
+  return await postJson<{ suggestions: string[] }>('/api/tasks/suggest', params)
+}
+
+export async function generateTaskRewrite(params: {
+  text: string
+  tone: string
+  instruction?: string
+}): Promise<{ text: string }> {
+  return await postJson<{ text: string }>('/api/tasks/rewrite', params)
+}
+
+/* =========================================================================
+   限定文档检索与诊断视图 API (Q-2026-10-19-07)
+   ========================================================================= */
+
+export async function retrieveKnowledge(
+  query: string,
+  options?: {
+    workspaceId?: string
+    documentIds?: string[]
+    debug?: boolean
+    topK?: number
+  }
+): Promise<{
+  chunks: KnowledgeSource[]
+  timings?: { embedMs: number; searchMs: number; totalMs: number }
+  debug?: RetrieveDebugResult
+}> {
+  return await postJson('/api/retrieve', { query, ...options })
+}
+
+/* =========================================================================
+   个人访问令牌 PAT API (Q-2026-10-19-09)
+   ========================================================================= */
+
+export async function createApiToken(): Promise<{
+  ok: boolean
+  token: string
+  hint: string
+  baseUrl: string
+}> {
+  return await postJson('/api/auth/token', {})
+}
+
+export async function revokeApiToken(): Promise<{ ok: boolean }> {
+  return await postJson('/api/auth/token', undefined, 'DELETE')
+}
+
+/* =========================================================================
+   图像生成 API (Q-2026-10-19-10)
+   ========================================================================= */
+
+export async function fetchImageStatus(): Promise<ImageStatus> {
+  return await getJson<ImageStatus>('/api/images/status')
+}
+
+export async function generateImageDirect(params: {
+  prompt: string
+  n?: number
+  size?: string
+}): Promise<{
+  created: number
+  data: { url?: string; b64_json?: string; revised_prompt?: string }[]
+  provider?: string
+  model?: string
+  tookMs?: number
+}> {
+  return await postJson('/api/images/generations', params)
+}
+

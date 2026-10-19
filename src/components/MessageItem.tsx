@@ -1,5 +1,5 @@
-// deslop-ignore-file 19 04 21 — 聊天产品惯例：圆形头像、单一强调色、气泡小尾巴
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
+import { useDismiss } from '../lib/useDismiss'
 import {
   AlertCircle,
   AlertTriangle,
@@ -7,17 +7,22 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Download,
+  Loader2,
   Pencil,
   RefreshCw,
   Share2,
+  Sparkles,
   Star,
   ThumbsDown,
   ThumbsUp,
   Trash2,
   Volume2,
   VolumeX,
+  Wand2,
   X,
 } from 'lucide-react'
+import { generateTaskRewrite } from '../api/client'
 import MarkdownRenderer from './MarkdownRenderer'
 import ReasoningBlock from './ReasoningBlock'
 import Citations from './Citations'
@@ -46,6 +51,7 @@ interface Props {
   onShare?: (message: Message) => void
   onToggleStar?: (messageId: string) => void
   onSwitchVariant?: (messageId: string, index: number) => void
+  onPickSuggestion?: (text: string) => void
 }
 
 function IconButton({
@@ -105,10 +111,16 @@ const MessageItem = memo(function MessageItem({
   onShare,
   onToggleStar,
   onSwitchVariant,
+  onPickSuggestion,
 }: Props) {
   const isUser = message.role === 'user'
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(message.content)
+  const [rewriteMenuOpen, setRewriteMenuOpen] = useState(false)
+  const [rewriting, setRewriting] = useState(false)
+  const [rewriteResult, setRewriteResult] = useState<string | null>(null)
+  const rewriteRef = useRef<HTMLDivElement>(null)
+  useDismiss(rewriteRef, () => setRewriteMenuOpen(false), rewriteMenuOpen)
   const enterCls = enter ? 'anim-fade-up ' : ''
 
   // ---------- 用户消息 ----------
@@ -287,6 +299,43 @@ const MessageItem = memo(function MessageItem({
             )}
             {!streaming && <Citations citations={message.citations} />}
             <KnowledgeSourcesBlock sources={message.sources} />
+
+            {/* 模型生成图片画廊 (Q-2026-10-19-10) */}
+            {message.generatedImages && message.generatedImages.length > 0 && (
+              <div className="my-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {message.generatedImages.map((img, idx) => {
+                  const src = img.url || img.dataUrl
+                  if (!src) return null
+                  return (
+                    <div
+                      key={idx}
+                      className="group/img relative overflow-hidden rounded-xl border border-rule bg-canvas shadow-1 transition-all hover:shadow-2"
+                    >
+                      <img
+                        src={src}
+                        alt={img.revisedPrompt || 'AI 绘画生成'}
+                        className="w-full h-auto object-cover max-h-80 cursor-zoom-in transition-transform duration-300 hover:scale-[1.02]"
+                        onClick={() => window.open(src, '_blank')}
+                      />
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-2.5 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-between text-white text-xs">
+                        <span className="truncate max-w-[80%] text-[11px]" title={img.revisedPrompt}>
+                          {img.revisedPrompt || 'AI 绘画'}
+                        </span>
+                        <a
+                          href={src}
+                          download={`ai-image-${Date.now()}.png`}
+                          className="p-1 rounded bg-white/20 hover:bg-white/30 transition-colors"
+                          title="下载原图"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Download size={13} />
+                        </a>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </>
         )}
 
@@ -322,6 +371,51 @@ const MessageItem = memo(function MessageItem({
             )}
 
             <CopyButton text={message.content} />
+
+            {/* 改写润色菜单 (Q-2026-10-19-06) */}
+            <div className="relative" ref={rewriteRef}>
+              <IconButton
+                label="改写与润色"
+                onClick={() => setRewriteMenuOpen((v) => !v)}
+              >
+                {rewriting ? <Loader2 size={13} className="animate-spin text-accent" /> : <Wand2 size={13} />}
+                <span className="hidden sm:inline">改写</span>
+              </IconButton>
+              {rewriteMenuOpen && (
+                <div className="absolute bottom-full left-0 mb-1 w-36 rounded-xl border border-rule bg-panel p-1 shadow-3 z-30 text-xs anim-fade-up">
+                  {[
+                    { key: 'concise', label: '更简洁' },
+                    { key: 'formal', label: '更正式' },
+                    { key: 'casual', label: '更口语' },
+                    { key: 'expand', label: '更详细' },
+                    { key: 'polish', label: '润色优化' },
+                    { key: 'translate', label: '译为英文' },
+                    { key: 'translate_zh', label: '译为中文' },
+                  ].map((tone) => (
+                    <button
+                      key={tone.key}
+                      type="button"
+                      disabled={rewriting}
+                      onClick={async () => {
+                        setRewriteMenuOpen(false)
+                        setRewriting(true)
+                        try {
+                          const res = await generateTaskRewrite({ text: message.content, tone: tone.key })
+                          if (res.text) setRewriteResult(res.text)
+                        } catch (err: any) {
+                          alert(`改写失败: ${err.message}`)
+                        } finally {
+                          setRewriting(false)
+                        }
+                      }}
+                      className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-ink-2 hover:bg-hover hover:text-ink-1 text-left"
+                    >
+                      <span>{tone.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* 收藏回答 */}
             <IconButton
@@ -393,6 +487,73 @@ const MessageItem = memo(function MessageItem({
               {formatMessageTime(message.createdAt)}
               {message.usage?.total ? ` · ${message.usage.total} tokens` : ''}
             </span>
+          </div>
+        )}
+
+        {/* 改写结果卡片 */}
+        {rewriteResult && (
+          <div className="mt-2.5 rounded-xl border border-accent/30 bg-accent/5 p-3 text-xs text-ink-1 space-y-2 anim-fade-in">
+            <div className="flex items-center justify-between text-[11px] font-semibold text-accent">
+              <span className="flex items-center gap-1">
+                <Wand2 size={12} />
+                改写结果
+              </span>
+              <button
+                type="button"
+                onClick={() => setRewriteResult(null)}
+                className="text-ink-4 hover:text-ink-2"
+              >
+                <X size={12} />
+              </button>
+            </div>
+            <p className="leading-relaxed whitespace-pre-wrap">{rewriteResult}</p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(rewriteResult)
+                  alert('已复制改写结果')
+                }}
+                className="rounded bg-panel px-2.5 py-1 text-[11px] border border-rule hover:bg-hover"
+              >
+                复制
+              </button>
+              {onEdit && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onEdit(message.id, rewriteResult)
+                    setRewriteResult(null)
+                  }}
+                  className="rounded bg-accent px-2.5 py-1 text-[11px] text-white hover:opacity-90"
+                >
+                  替换原文
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 智能追问建议 (Q-2026-10-19-06) */}
+        {!streaming && isLastAssistant && message.suggestions && message.suggestions.length > 0 && (
+          <div className="mt-3.5 space-y-1.5 anim-fade-in">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-ink-3">
+              <Sparkles size={12} className="text-accent" />
+              <span>猜你想问</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {message.suggestions.map((suggestion, sIdx) => (
+                <button
+                  key={sIdx}
+                  type="button"
+                  onClick={() => onPickSuggestion?.(suggestion)}
+                  className="flex items-center gap-1.5 rounded-full border border-rule/80 bg-panel px-3 py-1 text-xs text-ink-2 transition-all hover:border-accent hover:bg-hover hover:text-accent shadow-sm"
+                >
+                  <span>{suggestion}</span>
+                  <span className="text-[10px] opacity-40">↵</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
