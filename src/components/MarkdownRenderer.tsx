@@ -10,6 +10,7 @@ import 'katex/dist/katex.min.css'
 import { useChatStore } from '../store/chat'
 import { useArtifactStore } from '../store/artifact'
 import { downloadText, safeFileName } from '../lib/download'
+import { showToast } from './ui/Toast'
 import Spinner from './ui/Spinner'
 
 function extractText(node: unknown): string {
@@ -113,6 +114,7 @@ const CodeBlock = memo(function CodeBlock({
   const copy = useCallback(() => {
     navigator.clipboard.writeText(code).then(() => {
       setCopied(true)
+      showToast('代码已复制到剪贴板', 'success')
       setTimeout(() => setCopied(false), 1500)
     })
   }, [code])
@@ -138,7 +140,7 @@ const CodeBlock = memo(function CodeBlock({
               <button
                 type="button"
                 onClick={() => setViewMode('code')}
-                className={`flex items-center gap-1 rounded-md px-2 py-0.5 transition-all ${
+                className={`press flex items-center gap-1 rounded-md px-2 py-0.5 transition-all ${
                   viewMode === 'code'
                     ? 'bg-panel font-medium text-ink-1 shadow-sm'
                     : 'text-ink-3 hover:text-ink-1'
@@ -150,7 +152,7 @@ const CodeBlock = memo(function CodeBlock({
               <button
                 type="button"
                 onClick={() => setViewMode('preview')}
-                className={`flex items-center gap-1 rounded-md px-2 py-0.5 transition-all ${
+                className={`press flex items-center gap-1 rounded-md px-2 py-0.5 transition-all ${
                   viewMode === 'preview'
                     ? 'bg-accent text-on-accent font-medium shadow-sm'
                     : 'text-ink-3 hover:text-ink-1'
@@ -171,8 +173,9 @@ const CodeBlock = memo(function CodeBlock({
                     language: language || 'html',
                     createdAt: Date.now(),
                   })
+                  showToast('已在右侧分屏打开构件', 'info')
                 }}
-                className="flex items-center gap-1 rounded-md px-2 py-0.5 text-accent font-medium hover:bg-accent/10 transition-all ml-0.5"
+                className="press flex items-center gap-1 rounded-md px-2 py-0.5 text-accent font-medium hover:bg-accent/10 transition-all ml-0.5"
                 title="在 Claude 风格右侧独立分屏工作台中运行与调试"
               >
                 <Sparkles size={11} />
@@ -196,7 +199,10 @@ const CodeBlock = memo(function CodeBlock({
             </button>
           )}
           <button
-            onClick={() => downloadText(safeFileName(`code.${language || 'txt'}`), code)}
+            onClick={() => {
+              downloadText(safeFileName(`code.${language || 'txt'}`), code)
+              showToast('已下载代码文件', 'success')
+            }}
             className="r-sm flex items-center gap-1 px-2 py-1 text-xs text-ink-3 transition-ui press hover:bg-hover hover:text-ink-1"
           >
             <Download size={13} />
@@ -207,7 +213,7 @@ const CodeBlock = memo(function CodeBlock({
             className="r-sm flex items-center gap-1 px-2 py-1 text-xs text-ink-3 transition-ui press hover:bg-hover hover:text-ink-1"
             aria-label="复制代码"
           >
-            {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
+            {copied ? <Check size={13} className="text-emerald-500 anim-bounce" /> : <Copy size={13} />}
             {copied ? '已复制' : '复制'}
           </button>
         </div>
@@ -280,17 +286,27 @@ export default function MarkdownRenderer({ content }: { content: string }) {
             </a>
           ),
           table: ({ children }) => (
-            <div className="my-4 overflow-x-auto rounded-xl border border-rule">
+            <div className="my-4 overflow-x-auto rounded-xl border border-rule/80 bg-panel/40 shadow-xs">
               <table className="w-full border-collapse text-sm">{children}</table>
             </div>
           ),
+          thead: ({ children }) => (
+            <thead className="bg-hover-soft/80 border-b border-rule">
+              {children}
+            </thead>
+          ),
           th: ({ children }) => (
-            <th className="border-b border-rule-strong bg-panel px-3 py-2 text-left text-[13px] font-medium text-ink-1">
+            <th className="px-3.5 py-2.5 text-left text-[12px] font-semibold text-ink-1 uppercase tracking-wider">
               {children}
             </th>
           ),
+          tr: ({ children }) => (
+            <tr className="border-b border-rule/40 hover:bg-hover/60 transition-colors duration-150 last:border-b-0">
+              {children}
+            </tr>
+          ),
           td: ({ children }) => (
-            <td className="border-b border-rule px-3 py-2 text-[13px] text-ink-2 transition-colors duration-150">
+            <td className="px-3.5 py-2.5 text-[13px] text-ink-2">
               {children}
             </td>
           ),

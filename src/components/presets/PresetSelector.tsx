@@ -9,6 +9,7 @@ import {
 import { usePresetStore } from '../../store/preset'
 import { useDismiss } from '../../lib/useDismiss'
 import { ICON_BTN_SM } from '../../lib/ui'
+import { showToast } from '../ui/Toast'
 
 interface PresetSelectorProps {
   placement?: 'top' | 'bottom'
@@ -38,7 +39,7 @@ export default function PresetSelector({ placement = 'top' }: PresetSelectorProp
     <div className="relative inline-block" ref={ref}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 rounded-lg border border-rule/70 bg-panel px-2.5 py-1 text-xs text-ink-2 shadow-sm hover:border-accent/40 hover:bg-hover hover:text-ink-1 transition-ui"
+        className="press hover-lift flex items-center gap-1.5 rounded-lg border border-rule/70 bg-panel px-2.5 py-1 text-xs text-ink-2 shadow-sm hover:border-accent/40 hover:bg-hover hover:text-ink-1 transition-all"
         aria-label="选择预设"
       >
         {activePreset ? (
@@ -56,7 +57,7 @@ export default function PresetSelector({ placement = 'top' }: PresetSelectorProp
         )}
         <ChevronDown
           size={12}
-          className={`text-ink-4 transition-transform duration-150 ${open ? 'rotate-180' : ''}`}
+          className={`text-ink-4 transition-transform duration-200 ease-out ${open ? 'rotate-180' : ''}`}
         />
       </button>
 
@@ -75,7 +76,7 @@ export default function PresetSelector({ placement = 'top' }: PresetSelectorProp
                 setOpen(false)
                 setModalOpen(true, null)
               }}
-              className="flex items-center gap-1 text-[11px] text-accent hover:underline"
+              className="press flex items-center gap-1 text-[11px] text-accent hover:underline"
             >
               <Plus size={12} />
               新建
@@ -87,10 +88,11 @@ export default function PresetSelector({ placement = 'top' }: PresetSelectorProp
             <div
               onClick={() => {
                 setActivePresetId(null)
+                showToast('已切换至默认对话模式', 'info')
                 setOpen(false)
               }}
               className={`flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
-                !activePresetId ? 'bg-accent/10 font-medium text-accent' : 'text-ink-2 hover:bg-hover'
+                !activePresetId ? 'bg-accent/10 font-medium text-accent' : 'text-ink-2 hover:bg-hover hover:translate-x-0.5'
               }`}
             >
               <div className="flex items-center gap-2">
@@ -104,11 +106,12 @@ export default function PresetSelector({ placement = 'top' }: PresetSelectorProp
               return (
                 <div
                   key={preset.id}
-                  className={`group flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
-                    isActive ? 'bg-accent/10 font-medium text-accent' : 'text-ink-2 hover:bg-hover'
+                  className={`group flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-all ${
+                    isActive ? 'bg-accent/10 font-medium text-accent' : 'text-ink-2 hover:bg-hover hover:translate-x-0.5'
                   }`}
                   onClick={() => {
                     setActivePresetId(preset.id)
+                    showToast(`已激活预设：${preset.name}`, 'info')
                     setOpen(false)
                   }}
                 >
@@ -127,6 +130,7 @@ export default function PresetSelector({ placement = 'top' }: PresetSelectorProp
                       onClick={(e) => {
                         e.stopPropagation()
                         duplicatePreset(preset.id)
+                        showToast('已克隆预设', 'success')
                       }}
                       className={ICON_BTN_SM}
                       title="克隆预设"
@@ -149,6 +153,7 @@ export default function PresetSelector({ placement = 'top' }: PresetSelectorProp
                         e.stopPropagation()
                         if (confirm(`确定删除预设「${preset.name}」吗？`)) {
                           deletePreset(preset.id)
+                          showToast('已删除预设', 'info')
                         }
                       }}
                       className={`${ICON_BTN_SM} hover:text-danger`}

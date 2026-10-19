@@ -778,7 +778,11 @@ export default function ChatWindow() {
           {active && active.messages.length > 0 && (
             <>
               <button
-                onClick={() => setUsingContext(active.id, active.usingContext === false)}
+                onClick={() => {
+                  const next = active.usingContext === false
+                  setUsingContext(active.id, next)
+                  showToast(next ? '已开启历史上下文记忆' : '已关闭历史上下文记忆', 'info')
+                }}
                 // aria-pressed：让读屏知道这是「开关」而非普通按钮
                 aria-pressed={active.usingContext !== false}
                 className={`r-sm press flex h-8 items-center gap-1.5 px-2.5 text-xs transition-ui ${
