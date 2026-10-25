@@ -1,137 +1,90 @@
-import express from 'express'
-import cors from 'cors'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import dotenv from 'dotenv'
-
-// 始终加载 server/ 目录下的 .env，与启动时的工作目录无关
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-dotenv.config({ path: path.join(__dirname, '.env') })
-
-import { streamChat } from './providers/index.js'
-
-const app = express()
-app.use(cors())
-app.use(express.json({ limit: '2mb' }))
-
-const PORT = process.env.PORT || 3001
+import { config } from './config.js'
+import { createApp } from './app.js'
+import { initStorage, closeStorage } from './store/db.js'
+import { logger } from './lib/logger.js'
+import { configuredProviders } from './providers/registry.js'
+import { availableSearchProviders } from './search/index.js'
+import { resetStaleJobs } from './rag/jobs.js'
+import { cleanupSessions, countUsers } from './store/users.js'
 
 /**
- * 提供商注册表
- * type: 'openai-compat' | 'anthropic' | 'gemini'
- * 在此添加新的 OpenAI 兼容服务商只需增加一条记录并在 .env 中配置对应 Key
+ * 进程入口：只负责「装配 + 监听 + 优雅退出」。
+ * 业务逻辑在 app.js 与 routes/ 里，测试可以直接 createApp() 拿到同一个应用。
  */
-const PROVIDERS = [
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    type: 'openai-compat',
-    apiKeyEnv: 'OPENAI_API_KEY',
-    baseUrlEnv: 'OPENAI_BASE_URL',
-    defaultBaseUrl: 'https://api.openai.com/v1',
-    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'o3-mini'],
-  },
-  {
-    id: 'deepseek',
-    name: 'DeepSeek',
-    type: 'openai-compat',
-    apiKeyEnv: 'DEEPSEEK_API_KEY',
-    baseUrlEnv: 'DEEPSEEK_BASE_URL',
-    defaultBaseUrl: 'https://api.deepseek.com/v1',
-    models: ['deepseek-chat', 'deepseek-reasoner'],
-  },
-  {
-    id: 'anthropic',
-    name: 'Anthropic Claude',
-    type: 'anthropic',
-    apiKeyEnv: 'ANTHROPIC_API_KEY',
-    baseUrlEnv: 'ANTHROPIC_BASE_URL',
-    defaultBaseUrl: 'https://api.anthropic.com/v1',
-    models: [
-      'claude-sonnet-4-5-20250929',
-      'claude-haiku-4-5-20251001',
-      'claude-opus-4-1-20250805',
-    ],
-  },
-  {
-    id: 'gemini',
-    name: 'Google Gemini',
-    type: 'gemini',
-    apiKeyEnv: 'GEMINI_API_KEY',
-    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    models: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'],
-  },
-]
 
-function resolveProvider(id) {
-  const p = PROVIDERS.find((p) => p.id === id)
-  if (!p) return null
-  const apiKey = process.env[p.apiKeyEnv]
-  if (!apiKey) return null
-  const baseUrl = p.baseUrlEnv ? process.env[p.baseUrlEnv] || p.defaultBaseUrl : p.defaultBaseUrl
-  return { ...p, apiKey, baseUrl }
+initStorage()
+
+// 上次进程中断可能留下「processing」状态的行，复位成可重试的 failed
+await resetStaleJobs()
+
+// 清掉过期登录态；多用户模式下顺便提示「还没建管理员」和「有没有无主会话」
+cleanupSessions()
+if (config.auth.multiUser) {
+  const users = countUsers()
+  if (users === 0) {
+    logger.warn('已开启多用户模式但还没有任何账号：打开网页会进入「创建管理员」页')
+  } else {
+    const { getDb } = await import('./store/db.js')
+    const orphans = getDb().prepare('SELECT COUNT(*) AS n FROM conversations WHERE user_id IS NULL').get()?.n || 0
+    if (orphans > 0) {
+      logger.warn('存在无归属的历史会话，管理员可调用 POST /api/conversations/claim-orphans 认领', { orphans })
+    }
+  }
 }
 
-// 返回当前已配置密钥的提供商列表（不暴露任何密钥）
-// 模型列表可通过环境变量覆盖，如 ANTHROPIC_MODELS=space-bunny-free,another-model
-app.get('/api/providers', (_req, res) => {
-  const available = PROVIDERS.filter((p) => !!process.env[p.apiKeyEnv]).map(({ id, name, models }) => ({
-    id,
-    name,
-    models:
-      process.env[`${id.toUpperCase()}_MODELS`]?.split(',').map((s) => s.trim()).filter(Boolean) ||
-      models,
-  }))
-  res.json({ providers: available })
-})
-
-app.get('/api/health', (_req, res) => res.json({ ok: true }))
-
-// 统一流式聊天代理：上游三家协议差异在此抹平，
-// 向前端输出统一 SSE：{"type":"delta","content":"..."} / {"type":"error"} / {"type":"done"}
-app.post('/api/chat', async (req, res) => {
-  const { provider: providerId, model, messages, temperature, maxTokens, system } = req.body || {}
-
-  const provider = resolveProvider(providerId)
-  if (!provider) {
-    return res.status(400).json({ error: `提供商 "${providerId}" 未配置或不可用，请检查服务端 .env` })
-  }
-  if (!model || !Array.isArray(messages) || messages.length === 0) {
-    return res.status(400).json({ error: '参数不完整：需要 model 与 messages' })
-  }
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
+const app = createApp()
+const server = app.listen(config.server.port, config.server.host, () => {
+  const providers = configuredProviders()
+  logger.info(`FlyChat 服务已启动 http://${config.server.host}:${config.server.port}`, {
+    version: config.version,
+    env: config.env,
+    providers: providers.length ? providers.map((p) => p.id).join(',') : '（无，请在设置里配置）',
+    search: availableSearchProviders().join(',') || '（未配置）',
+    auth: config.auth.token ? '已开启访问令牌' : '未开启',
   })
-  const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`)
-
-  const abort = new AbortController()
-  req.on('close', () => abort.abort())
-
-  try {
-    await streamChat(provider, {
-      model,
-      messages,
-      system,
-      temperature,
-      maxTokens,
-      abortSignal: abort.signal,
-      onDelta: (text) => send({ type: 'delta', content: text }),
-    })
-    send({ type: 'done' })
-  } catch (err) {
-    if (!abort.signal.aborted) {
-      console.error('[chat error]', err?.message || err)
-      send({ type: 'error', message: err?.message || '上游请求失败' })
-    }
-  } finally {
-    res.end()
+  if (providers.length === 0) {
+    logger.warn('还没有可用的模型服务商：打开前端「设置 → 模型服务」添加，或在 server/.env 填入 API Key')
   }
 })
 
-app.listen(PORT, () => {
-  console.log(`FlyChat server listening on http://localhost:${PORT}`)
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    logger.error(`端口 ${config.server.port} 已被占用`, {
+      hint: '可能是上一次启动的进程还没退出；换端口用 PORT=3002 启动',
+    })
+  } else {
+    logger.error('服务启动失败', { message: err?.message })
+  }
+  process.exit(1)
+})
+
+// 优雅退出：先停止接新连接，再关数据库，避免 WAL 未落盘
+let shuttingDown = false
+function shutdown(signal) {
+  if (shuttingDown) return
+  shuttingDown = true
+  logger.info(`收到 ${signal}，正在退出…`)
+  const force = setTimeout(() => {
+    logger.warn('优雅退出超时，强制结束')
+    process.exit(1)
+  }, 5000)
+  force.unref()
+
+  server.close(() => {
+    closeStorage()
+    logger.info('已退出')
+    process.exit(0)
+  })
+}
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => shutdown(signal))
+}
+
+// 进程级兜底：漏网的异常只记录，不直接把服务打挂
+process.on('unhandledRejection', (reason) => {
+  logger.error('未处理的 Promise 拒绝', { message: reason?.stack || reason?.message || String(reason) })
+})
+process.on('uncaughtException', (err) => {
+  logger.error('未捕获异常', { message: err?.stack || err?.message || String(err) })
 })

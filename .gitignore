@@ -2,6 +2,14 @@ node_modules
 dist
 server/.env
 server/.env.local
+# 网页上配置的自定义服务商（含 API Key），不入库
+server/data
+.tmp
 *.log
 *.tsbuildinfo
 .DS_Store
+.shots
+preview-*.png
+# >>> multi-agent-collab:private >>>
+/.multi-agent-collab/
+# <<< multi-agent-collab:private <<<

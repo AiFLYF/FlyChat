@@ -5,13 +5,23 @@
   "description": "FlyChat - 一站式 AI 聊天平台",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
     "dev": "concurrently -n server,web -c yellow,cyan \"npm:dev:server\" \"npm:dev:web\"",
     "dev:web": "vite",
     "dev:server": "node server/index.js",
+    "clean": "node scripts/clean.mjs dist",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "test": "node --test \"server/test/*.test.js\"",
+    "test:watch": "node --test --watch \"server/test/*.test.js\"",
+    "smoke:api": "node scripts/smoke-api.mjs",
+    "smoke": "node scripts/smoke-ui.mjs",
+    "mock:flash": "node scripts/mock-flash.mjs",
+    "audit:ui": "python scripts/audit-ui.py"
   },
   "dependencies": {
     "concurrently": "^9.1.2",
@@ -19,12 +29,20 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "highlight.js": "^11.10.0",
+    "html-to-image": "^1.11.13",
+    "idb-keyval": "^6.3.0",
+    "katex": "^0.19.0",
     "lucide-react": "^0.469.0",
+    "mammoth": "^1.13.0",
+    "mermaid": "^12.1.0",
+    "pdf-parse": "^2.4.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",
     "rehype-highlight": "^7.0.1",
+    "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.0",
+    "remark-math": "^6.0.0",
     "zustand": "^5.0.2"
   },
   "optionalDependencies": {

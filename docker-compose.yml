@@ -1,0 +1,38 @@
+services:
+  flychat:
+    build: .
+    image: flychat:latest
+    container_name: flychat
+    restart: unless-stopped
+    ports:
+      # 只绑本机，公网访问交给前面的 nginx/caddy 反代
+      - "127.0.0.1:3001:3001"
+    env_file:
+      # 把 server/.env 里的 Key 复制到项目根的 .env 供 compose 读取；
+      # required: false 让没有 .env 时也能启动（改为在网页「模型服务」里配置）
+      - path: .env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      FLYCHAT_DATA_DIR: /data
+      # 暴露到公网时务必设置（并配合反向代理的 HTTPS）
+      # FLYCHAT_ACCESS_TOKEN: 换成你自己的长随机串
+      # CORS_ORIGINS: https://chat.example.com
+      TRUST_PROXY: "1"
+      LOG_FORMAT: json
+    volumes:
+      # 数据库、自定义服务商配置、模型目录覆盖都放这里，容器重建不丢
+      - flychat-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  flychat-data:
