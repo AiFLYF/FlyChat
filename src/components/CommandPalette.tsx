@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  BarChart3,
   Brain,
   Check,
   MessageSquare,
@@ -8,13 +9,21 @@ import {
   Search,
   Settings as SettingsIcon,
   Sun,
-  Zap,
 } from 'lucide-react'
 import { useChatStore } from '../store/chat'
 import { useSettingsOpen } from './openPanels'
 import { usePresence } from '../lib/usePresence'
 
 import { showToast } from './ui/Toast'
+
+/** 快捷键提示：统一描边胶囊样式（与搜索框右侧 ESC 一致） */
+function Kbd({ children }: { children: string }) {
+  return (
+    <kbd className="rounded border border-rule bg-hover px-1.5 py-0.5 text-[10px] font-mono text-ink-3">
+      {children}
+    </kbd>
+  )
+}
 
 interface CommandPaletteProps {
   open: boolean
@@ -92,7 +101,7 @@ export default function CommandPalette({ open, onClose, onOpenUsage }: CommandPa
           >
             <Plus size={16} className="text-accent" />
             <span className="flex-1 font-medium">创建新对话</span>
-            <kbd className="text-[11px] font-mono text-ink-4">Ctrl+Shift+O</kbd>
+            <Kbd>Ctrl+Shift+O</Kbd>
           </button>
 
           <button
@@ -104,7 +113,7 @@ export default function CommandPalette({ open, onClose, onOpenUsage }: CommandPa
             }}
             className="press flex items-center gap-2.5 rounded-xl px-3 py-2 text-ink-1 hover:bg-hover hover:translate-x-0.5 transition-all duration-150 text-left"
           >
-            {settings.theme === 'dark' ? <Sun size={16} className="text-amber-500" /> : <Moon size={16} className="text-indigo-500" />}
+            {settings.theme === 'dark' ? <Sun size={16} className="text-ink-3" /> : <Moon size={16} className="text-ink-3" />}
             <span className="flex-1">切换到{settings.theme === 'dark' ? '浅色' : '深色'}主题</span>
           </button>
 
@@ -117,7 +126,7 @@ export default function CommandPalette({ open, onClose, onOpenUsage }: CommandPa
             }}
             className="press flex items-center gap-2.5 rounded-xl px-3 py-2 text-ink-1 hover:bg-hover hover:translate-x-0.5 transition-all duration-150 text-left"
           >
-            <Brain size={16} className="text-purple-500" />
+            <Brain size={16} className="text-ink-3" />
             <span className="flex-1">切换深度思考模式</span>
             {settings.thinking && <Check size={14} className="text-accent" />}
           </button>
@@ -129,7 +138,7 @@ export default function CommandPalette({ open, onClose, onOpenUsage }: CommandPa
             }}
             className="press flex items-center gap-2.5 rounded-xl px-3 py-2 text-ink-1 hover:bg-hover hover:translate-x-0.5 transition-all duration-150 text-left"
           >
-            <Zap size={16} className="text-amber-500" />
+            <BarChart3 size={16} className="text-ink-3" />
             <span className="flex-1">查看 Token 用量与费用分析</span>
           </button>
 

@@ -29,7 +29,8 @@ function Pill({ onClick, label, active, disabled, children }: PillProps) {
       title={label}
       aria-label={label}
       // disabled-x：统一不透明度 + not-allowed 光标（原先只有 opacity-40，无光标反馈）
-      className={`press flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-ui disabled-x ${
+      // 触控目标 ≥40px：指针设备保持 h-8 视觉高度，粗指针（手机/平板）扩到 h-10
+      className={`press flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-ui disabled-x [@media(pointer:coarse)]:h-10 ${
         active
           ? 'border-transparent bg-accent-soft font-medium text-accent'
           : 'border-rule text-ink-2 hover:bg-hover hover:text-ink-1'

@@ -1,4 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <rect width="24" height="24" rx="6" fill="#2563eb"/>
-  <path d="M13.5 4.5 5.5 14h5l-1 5.5L18.5 10h-5.5l.5-5.5z" fill="#fff"/>
+<svg viewBox="0 0 48 48" width="48" height="48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="fly-grad-main" x1="4" y1="6" x2="44" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="50%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#8b5cf6" />
+    </linearGradient>
+    <linearGradient id="fly-grad-wing" x1="16" y1="4" x2="38" y2="28" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#60a5fa" />
+      <stop offset="100%" stop-color="#3b82f6" />
+    </linearGradient>
+    <linearGradient id="fly-grad-accent" x1="20" y1="20" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#a78bfa" />
+      <stop offset="100%" stop-color="#c084fc" />
+    </linearGradient>
+    <linearGradient id="fly-grad-under" x1="8" y1="24" x2="28" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1e3a8a" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#4338ca" stop-opacity="0.9" />
+    </linearGradient>
+  </defs>
+
+  <rect width="48" height="48" rx="12" fill="#0f172a" />
+  
+  <path
+    d="M10 25L38 10L25 38L20 27L10 25Z"
+    fill="url(#fly-grad-main)"
+  />
+  <path
+    d="M20 27L38 10L25 21L20 27Z"
+    fill="url(#fly-grad-wing)"
+    fill-opacity="0.9"
+  />
+  <path
+    d="M10 25L20 27L16 33L10 25Z"
+    fill="url(#fly-grad-under)"
+  />
+  <path
+    d="M25 38L20 27L29 29L25 38Z"
+    fill="url(#fly-grad-accent)"
+  />
+  <path
+    d="M13 25.2L36 11"
+    stroke="#ffffff"
+    stroke-width="1.2"
+    stroke-linecap="round"
+    stroke-opacity="0.5"
+  />
 </svg>
