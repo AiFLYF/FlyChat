@@ -136,13 +136,13 @@ npm run dev
 ### 没有任何 API Key 也能跑通全流程
 
 ```bash
-npm run mock:flash     # 终端 1：本地闪测模型（OpenAI 协议假上游，固定 :8790）
-npm run dev            # 终端 2：前后端
+npm run mock:flash -- --register   # 终端 1：本地闪测模型（固定 :8790）并自动注册到后端
+npm run dev                        # 终端 2：前后端
 ```
 
-然后在「设置 → 模型服务」添加自定义服务商：类型 `openai-compat`，
-Base URL `http://127.0.0.1:8790/v1`，Key 随意填，模型 `mock-flash`。
-即可完整体验流式输出、思考过程、工具调用与用量统计，零费用、零外网依赖。
+刷新页面，在「设置 → 常规与模型」里选「闪测模型」即可。
+（不要用 Windows shell 里的 curl 内联中文 JSON 注册——本地代码页会把中文名毁成乱码；
+`--register` 走 Node fetch 发标准 UTF-8，没有这个问题。）
 
 ### 免费真模型（推荐）
 

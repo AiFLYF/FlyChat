@@ -37,6 +37,35 @@ const upstream = await startMockUpstream({
 
 console.log(`[mock-flash] ready at ${upstream.baseUrl}`)
 console.log('[mock-flash] provider: openai-compat / model: mock-flash')
+
+// ——register [flychat-url]：把闪测模型注册进 FlyChat。
+// 必须用 node fetch（标准 UTF-8）：在 Windows shell 里用 curl 内联中文 JSON
+// 会被本地代码页毁成 mojibake（真实踩过：服务商名变成一串 U+FFFD 方块）。
+const regIdx = process.argv.indexOf('--register')
+if (regIdx > -1) {
+  const flychat = /^https?:\/\//.test(process.argv[regIdx + 1] || '')
+    ? process.argv[regIdx + 1]
+    : 'http://127.0.0.1:3001'
+  try {
+    const res = await fetch(`${flychat}/api/providers/custom`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: '闪测模型',
+        type: 'openai-compat',
+        baseUrl: upstream.baseUrl,
+        apiKey: 'sk-mock',
+        models: ['mock-flash'],
+      }),
+    })
+    const out = await res.json().catch(() => ({}))
+    if (res.ok) console.log(`[mock-flash] 已注册到 ${flychat}（id: ${out.id}），刷新页面即可在设置里选用`)
+    else console.error(`[mock-flash] 注册失败 HTTP ${res.status}:`, JSON.stringify(out))
+  } catch (err) {
+    console.error(`[mock-flash] 注册失败（后端没在 ${flychat} 运行？）:`, err?.message)
+  }
+}
+
 console.log('[mock-flash] Ctrl+C 退出')
 
 const shutdown = () => {
