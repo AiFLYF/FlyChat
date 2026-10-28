@@ -20,6 +20,7 @@ import { useKnowledgeStore } from '../store/knowledge'
 import { usePresetStore } from '../store/preset'
 import { usePresence } from '../lib/usePresence'
 import { showToast } from './ui/Toast'
+import { useFocusTrap } from '../lib/useFocusTrap'
 
 /** 快捷键提示：统一描边胶囊样式（与搜索框右侧 ESC 一致） */
 function Kbd({ children }: { children: string }) {
@@ -41,6 +42,8 @@ export default function CommandPalette({ open, onClose, onOpenUsage }: CommandPa
   const [query, setQuery] = useState('')
   const [selectedIdx, setSelectedIdx] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(panelRef, open)
 
   const conversations = useChatStore((s) => s.conversations)
   const activeId = useChatStore((s) => s.activeId)
@@ -262,6 +265,7 @@ export default function CommandPalette({ open, onClose, onOpenUsage }: CommandPa
 
       {/* 命令面板卡片 */}
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="快捷指令"

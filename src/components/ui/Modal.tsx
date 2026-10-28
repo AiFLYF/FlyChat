@@ -32,9 +32,11 @@ export default function Modal({
   /** 内容区下方是否还有内容：决定底部渐隐要不要画 */
   const [moreBelow, setMoreBelow] = useState(false)
 
-  // 焦点管理：打开时把焦点移入面板内第一个可聚焦控件，关闭后归还给触发它的元素
+  // 焦点管理：打开时把焦点移入面板内第一个可聚焦控件，关闭后归还给触发它的元素。
+  // 依赖里必须带 mounted：首次打开时 phase 还是 'closed'，面板这一帧还没挂载，
+  // 只看 open 的话 effect 跑在 panelRef 为 null 的时候，焦点永远进不了弹窗。
   useEffect(() => {
-    if (!open) return
+    if (!open || !mounted) return
     const previous = document.activeElement as HTMLElement | null
     const panel = panelRef.current
     const focusables = panel?.querySelectorAll<HTMLElement>(
@@ -42,7 +44,7 @@ export default function Modal({
     )
     ;(focusables?.[0] ?? panel)?.focus()
     return () => previous?.focus?.()
-  }, [open])
+  }, [open, mounted])
 
   /**
    * Esc 关闭。

@@ -75,39 +75,43 @@ export default function ReasoningBlock({
 
   return (
     <div className="anim-fade-in mb-3 overflow-hidden rounded-xl border border-rule/70 bg-panel/75 shadow-1 backdrop-blur-sm">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-ink-2 transition-all hover:bg-hover"
-      >
-        <div className="relative flex items-center justify-center">
-          <Brain
-            size={14}
-            className={`shrink-0 transition-colors ${
-              streaming ? 'text-accent animate-pulse' : 'text-purple-500/80 dark:text-purple-400'
-            }`}
-          />
-          {streaming && (
-            <span className="absolute -right-0.5 -top-0.5 flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
+      {/* 头部不能整体做成 <button>：里面还有一个「复制」按钮，
+          按钮套按钮是非法 DOM，键盘焦点和点击语义都会出问题 */}
+      <div className="flex w-full items-center gap-2 px-3 py-2 text-xs text-ink-2 transition-all hover:bg-hover">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <div className="relative flex items-center justify-center">
+            <Brain
+              size={14}
+              className={`shrink-0 transition-colors ${
+                streaming ? 'text-accent animate-pulse' : 'text-purple-500/80 dark:text-purple-400'
+              }`}
+            />
+            {streaming && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
+              </span>
+            )}
+          </div>
+
+          <span className="font-medium text-ink-1">
+            {streaming ? '深度推理思考中…' : '已完成深度思考'}
+          </span>
+
+          {displayTime && (
+            <span className="rounded-md bg-hover px-1.5 py-0.5 font-mono text-[10px] text-ink-3">
+              {displayTime}s
             </span>
           )}
-        </div>
 
-        <span className="font-medium text-ink-1">
-          {streaming ? '深度推理思考中…' : '已完成深度思考'}
-        </span>
-
-        {displayTime && (
-          <span className="rounded-md bg-hover px-1.5 py-0.5 font-mono text-[10px] text-ink-3">
-            {displayTime}s
+          <span className="hidden text-[10px] text-ink-3 sm:inline">
+            · {text.length} 字符
           </span>
-        )}
-
-        <span className="hidden text-[10px] text-ink-3 sm:inline">
-          · {text.length} 字符
-        </span>
+        </button>
 
         <div className="ml-auto flex items-center gap-1.5">
           <button
@@ -123,14 +127,21 @@ export default function ReasoningBlock({
             )}
           </button>
 
-          <ChevronRight
-            size={13}
-            className={`shrink-0 text-ink-3 transition-transform duration-200 ease-out ${
-              open ? 'rotate-90' : ''
-            }`}
-          />
+          <button
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            aria-label={open ? '收起思考过程' : '展开思考过程'}
+            className="press rounded p-0.5 text-ink-3 transition-colors hover:text-ink-1"
+          >
+            <ChevronRight
+              size={13}
+              className={`shrink-0 transition-transform duration-200 ease-out ${
+                open ? 'rotate-90' : ''
+              }`}
+            />
+          </button>
         </div>
-      </button>
+      </div>
 
       {/* 平滑网格折叠容器 */}
       <div

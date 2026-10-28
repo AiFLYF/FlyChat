@@ -17,6 +17,10 @@ export function ConstellationHero({ className = '' }: { className?: string }) {
     let width = (canvas.width = canvas.parentElement?.clientWidth || 800)
     let height = (canvas.height = canvas.parentElement?.clientHeight || 400)
 
+    // 尊重系统的「减少动态效果」：只画一帧静态星图，不再跑 RAF 循环。
+    // CSS 的 reduced-motion 降级管不到 canvas，必须在这里自己判断。
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
     const handleResize = () => {
       if (!canvas || !canvas.parentElement) return
       width = canvas.width = canvas.parentElement.clientWidth
@@ -41,8 +45,10 @@ export function ConstellationHero({ className = '' }: { className?: string }) {
       // 绘制粒子与临近连线
       for (let i = 0; i < particleCount; i++) {
         const p1 = particles[i]
-        p1.x += p1.vx
-        p1.y += p1.vy
+        if (!reduceMotion) {
+          p1.x += p1.vx
+          p1.y += p1.vy
+        }
 
         if (p1.x < 0 || p1.x > width) p1.vx *= -1
         if (p1.y < 0 || p1.y > height) p1.vy *= -1
@@ -69,7 +75,7 @@ export function ConstellationHero({ className = '' }: { className?: string }) {
         }
       }
 
-      animationFrameId = requestAnimationFrame(render)
+      if (!reduceMotion) animationFrameId = requestAnimationFrame(render)
     }
 
     render()

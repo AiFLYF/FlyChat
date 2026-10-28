@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { KeyRound, Lock, User, X } from 'lucide-react'
 import { useAuthStore } from '../../store/auth'
 import { BUTTON_PRIMARY, FIELD, ICON_BTN_SM, LABEL, OVERLAY } from '../../lib/ui'
 import { BrandLogo } from '../ui/BrandLogo'
+import { useFocusTrap } from '../../lib/useFocusTrap'
 
 export default function AuthModal() {
   const modalOpen = useAuthStore((s) => s.modalOpen)
@@ -21,6 +22,8 @@ export default function AuthModal() {
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const uid = useId()
 
   // Esc 关闭：只在「已登录、主动来改密码」时允许。
   // 初始化管理员和登录是强制流程，Esc 把人关在门外等于让应用没法用，
@@ -33,6 +36,9 @@ export default function AuthModal() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [modalOpen, user, setModalOpen])
+
+  // 全屏遮罩下的强制流程：焦点不能跑到遮罩后面
+  useFocusTrap(panelRef, modalOpen)
 
   // 当不需要登录或不是多用户模式时，不显示
   if (!isMulti || (!isSetup && user) || !modalOpen) {
@@ -91,6 +97,7 @@ export default function AuthModal() {
   return (
     <div className={OVERLAY}>
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={isSetup ? '初始化系统管理员' : '账户登录'}
@@ -129,10 +136,12 @@ export default function AuthModal() {
           )}
 
           <div>
-            <label className={LABEL}>用户名</label>
+            <label className={LABEL} htmlFor={`${uid}-username`}>用户名</label>
             <div className="relative">
               <User size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
               <input
+                id={`${uid}-username`}
+                aria-label="用户名"
                 autoFocus
                 type="text"
                 value={username}
@@ -146,8 +155,10 @@ export default function AuthModal() {
 
           {isSetup && (
             <div>
-              <label className={LABEL}>显示名称（可选）</label>
+              <label className={LABEL} htmlFor={`${uid}-display`}>显示名称（可选）</label>
               <input
+                id={`${uid}-display`}
+                aria-label="显示名称"
                 type="text"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
@@ -158,10 +169,12 @@ export default function AuthModal() {
           )}
 
           <div>
-            <label className={LABEL}>密码</label>
+            <label className={LABEL} htmlFor={`${uid}-password`}>密码</label>
             <div className="relative">
               <Lock size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
               <input
+                id={`${uid}-password`}
+                aria-label="密码"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -174,10 +187,12 @@ export default function AuthModal() {
 
           {isSetup && (
             <div>
-              <label className={LABEL}>确认密码</label>
+              <label className={LABEL} htmlFor={`${uid}-confirm`}>确认密码</label>
               <div className="relative">
                 <KeyRound size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
                 <input
+                  id={`${uid}-confirm`}
+                  aria-label="确认密码"
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}

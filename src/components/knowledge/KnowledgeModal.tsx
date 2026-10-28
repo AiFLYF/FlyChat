@@ -24,6 +24,7 @@ import { useChatStore } from '../../store/chat'
 import { retrieveKnowledge } from '../../api/client'
 import type { RetrieveDebugResult } from '../../types'
 import { FIELD, ICON_BTN_SM, OVERLAY } from '../../lib/ui'
+import { useFocusTrap } from '../../lib/useFocusTrap'
 
 export default function KnowledgeModal() {
   const modalOpen = useKnowledgeStore((s) => s.modalOpen)
@@ -39,6 +40,10 @@ export default function KnowledgeModal() {
   const removeDocument = useKnowledgeStore((s) => s.removeDocument)
   const createWorkspace = useKnowledgeStore((s) => s.createWorkspace)
   const removeWorkspace = useKnowledgeStore((s) => s.removeWorkspace)
+
+  const panelRef = useRef<HTMLDivElement>(null)
+  // 自绘浮层也要有焦点陷阱，否则 Tab 会跑到遮罩后面
+  useFocusTrap(panelRef, modalOpen)
 
   const [newWsName, setNewWsName] = useState('')
   const [showNewWs, setShowNewWs] = useState(false)
@@ -208,6 +213,7 @@ export default function KnowledgeModal() {
   return (
     <div className={OVERLAY}>
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="知识库与 RAG 检索中心"
