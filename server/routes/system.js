@@ -28,7 +28,14 @@ router.get('/health', (_req, res) => {
     version: config.version,
     env: config.env,
     uptimeSeconds: Math.round(process.uptime()),
-    storage: { ...storage, ...(storage.available ? conversationStats() : {}) },
+    // 健康检查是公开探针：不返回数据库绝对路径（泄露部署目录结构），
+    // 只给「能不能用 + 驱动类型」
+    storage: {
+      driver: storage.driver,
+      available: storage.available,
+      ...(storage.available ? conversationStats() : {}),
+      ...(storage.error ? { error: storage.error } : {}),
+    },
     providers: {
       configured: providers.length,
       total: allProviders().length,

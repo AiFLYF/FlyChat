@@ -27,6 +27,8 @@ test('GET /api/health：存储、服务商、搜索状态一屏可见', async ()
   assert.equal(body.ok, true)
   assert.equal(body.storage.available, true)
   assert.equal(body.storage.driver, 'sqlite')
+  // 健康检查是公开接口：不能把数据库绝对路径（部署目录结构）暴露出去
+  assert.equal(body.storage.file, undefined)
   assert.ok(Array.isArray(body.providers.ids))
 })
 
