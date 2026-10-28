@@ -113,8 +113,9 @@ server/
 | GET | `/api/providers/:id/remote-models` | 拉取上游模型清单 |
 | GET | `/api/models` | 模型目录（上下文窗口/能力/价格） |
 | GET | `/api/models/:provider/*` | 单个模型详情（模型名可含斜杠） |
-| GET/POST | `/api/conversations` | 列表（`?q=` 搜索）/ 创建 |
+| GET/POST | `/api/conversations` | 列表（`?q=` 搜索、`?folderId=` / `?tag=` / `?unfiled=1` 过滤、`?limit=&offset=` 分页；默认不带消息体）/ 创建 |
 | GET/PATCH/DELETE | `/api/conversations/:id` | 详情 / 改名置顶 / 删除 |
+| DELETE | `/api/conversations` | 清空当前用户的全部会话，必须带 `confirm: "DELETE"` |
 | PUT | `/api/conversations/:id/messages` | 批量写入消息（`replace` 控制覆盖） |
 | GET | `/api/conversations/:id/export?format=md\|json` | 导出单个会话 |
 | GET | `/api/export` | 全量导出（换机/迁移） |
@@ -138,8 +139,9 @@ server/
 | GET | `/api/tasks` | 小任务类型与改写风格列表 |
 | POST | `/api/tasks/:kind` | 小任务：`title` / `summary` / `suggest` / `rewrite` |
 | GET/POST | `/api/folders` | 文件夹列表（带会话数）/ 新建 |
+| GET | `/api/folders/:id` | 单个文件夹 |
 | PATCH/DELETE | `/api/folders/:id` | 改名 / 删除（**里面的会话不删，只回到未分类**） |
-| POST | `/api/folders/:id/move` | 批量移入；`id` 传 `none` 表示移出 |
+| POST | `/api/folders/:id/move` | 按 `conversationIds` 批量移入；`id` 传 `none` 表示移出 |
 | GET | `/api/tags` | 所有标签及其数量（侧栏标签云） |
 | GET/POST | `/api/presets` | 预设列表 / 新建（带 `id` 即修改） |
 | GET/PUT | `/api/presets/:id` | 读 / 改单个预设 |
@@ -156,6 +158,7 @@ server/
 | GET | `/api/share/:id` | 公开读取分享（无需令牌） |
 | GET | `/api/shares` | 分享列表 |
 | DELETE | `/api/share/:id` | 取消分享 |
+| GET | `/s/:id` | 分享页（**HTML，不是 JSON 接口**）：注入 OG / Twitter meta 后回 SPA |
 | POST | `/api/audio/transcriptions` | 语音转文字（JSON 传 base64，服务端转 multipart） |
 | POST | `/api/audio/speech` | 文字转语音（返回音频流） |
 | GET | `/api/knowledge/status` | 知识库是否可用、向量化模型、文档数 |
@@ -167,7 +170,9 @@ server/
 | DELETE | `/api/documents/:id` | 删除文档及其切块 |
 | POST | `/api/retrieve` | 单独检索（调试/搜索框用） |
 | GET/PUT | `/api/budget` | 成本上限查询 / 设置（0 = 不限制） |
-| GET | `/api/usage` | 用量与花费聚合（按天/按模型） |
+| GET | `/api/usage` | 用量与花费聚合（按天/按模型，`?days=` 默认 30；多用户下只返回自己的） |
+| GET | `/api/usage/summary` | `/api/usage` 的别名，前端两种叫法都支持 |
+| GET | `/api/usage/recent` | 最近的用量明细（`?limit=`） |
 | GET | `/v1/models` | OpenAI 兼容：模型列表 |
 | POST | `/v1/chat/completions` | OpenAI 兼容：补全（流式/非流式/tools 透传） |
 | GET | `/api/health` | 健康检查（存储、服务商、搜索、熔断） |
