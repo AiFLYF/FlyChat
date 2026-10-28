@@ -23,6 +23,19 @@ const browser = await chromium.launch({
   args: ['--no-proxy-server', '--proxy-bypass-list=<-loopback>'],
 })
 
+/**
+ * 进入应用。
+ *
+ * 不能用 waitUntil:'networkidle'：Vite 冷启动要先做依赖预构建，本机实测能到 60s+，
+ * 30s 的 networkidle 会直接超时（表现成「服务已就绪但 page.goto 失败」）。
+ * domcontentloaded + 等输入框出现，说明模块图已经加载完，比 networkidle 稳。
+ */
+async function gotoApp(page) {
+  await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 120000 })
+  await page.waitForSelector('textarea', { timeout: 120000 })
+  await page.waitForTimeout(400)
+}
+
 /** 越界检测：根容器是 overflow-hidden，滚动条检测无效，必须逐元素比对 */
 async function outOfBounds(page) {
   return page.evaluate(() => {
@@ -63,7 +76,7 @@ for (const s of LAYOUTS) {
   })
   page.on('pageerror', (e) => errors.push(`[${tag}] pageerror: ${e.message}`))
 
-  await page.goto(base, { waitUntil: 'networkidle', timeout: 30000 })
+  await gotoApp(page)
   await page.waitForTimeout(1200)
   await page.screenshot({ path: `${out}smoke-${tag}.png` })
   console.log('shot ok:', tag)
@@ -190,19 +203,23 @@ for (const s of LAYOUTS) {
   const opposite = s.colorScheme === 'dark' ? '浅色' : '深色'
   const themeBtn = page.getByRole('button', { name: opposite })
   if (await themeBtn.count()) {
+    // 这个类只挂 260ms，而且主题切换会触发整站重渲染：
+    // 主线程忙的时候，这 260ms 可能整个落在一次同步渲染里，
+    // 轮询根本插不进去（实测 evaluate 轮询和 waitForFunction 都会漏采）。
+    // 用 MutationObserver 记录「是否出现过」，才不依赖主线程什么时候让出。
+    await page.evaluate(() => {
+      window.__themeAnimSeen = document.documentElement.classList.contains('theme-anim')
+      window.__themeObs = new MutationObserver(() => {
+        if (document.documentElement.classList.contains('theme-anim')) window.__themeAnimSeen = true
+      })
+      window.__themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    })
     await themeBtn.click()
-    // 这个类只挂 260ms，单次 evaluate 很容易正好错过（之前就是这么误报的），
-    // 改成在窗口内轮询：出现过就算通过。
-    let animOn = true
-    try {
-      await page.waitForFunction(
-        () => document.documentElement.classList.contains('theme-anim'),
-        null,
-        { timeout: 1200, polling: 20 }
-      )
-    } catch {
-      animOn = false
-    }
+    await page.waitForTimeout(420)
+    const animOn = await page.evaluate(() => {
+      window.__themeObs?.disconnect()
+      return !!window.__themeAnimSeen
+    })
     await page.waitForTimeout(90)
     await page.screenshot({ path: `${out}smoke-${tag}-theme-switch.png` })
     await page.waitForTimeout(420)
@@ -248,7 +265,7 @@ for (const s of LAYOUTS) {
 
 /** 向 IndexedDB 播种一个会话。zustand persist 用 idb-keyval，键名 flychat-store */
 async function seedConversation(page, messages, title) {
-  await page.goto(base, { waitUntil: 'networkidle', timeout: 30000 })
+  await gotoApp(page)
   // 必须等应用 hydrate 完成，否则它会把空状态写回 IDB 覆盖播种
   await page.waitForTimeout(1500)
   return page.evaluate(
@@ -446,7 +463,7 @@ for (const c of CHAT_CASES) {
   page.on('console', (m) => {
     if (m.type() === 'error') errors.push('[reduced-motion] console: ' + m.text())
   })
-  await page.goto(base, { waitUntil: 'networkidle', timeout: 30000 })
+  await gotoApp(page)
   await page.waitForTimeout(600)
   await page.getByRole('button', { name: '设置' }).first().click()
   await page.waitForTimeout(80)
