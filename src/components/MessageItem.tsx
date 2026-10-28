@@ -48,6 +48,8 @@ interface Props {
   enter?: boolean
   onRegenerate?: () => void
   onEdit?: (messageId: string, newContent: string) => void
+  onUpdateContent?: (messageId: string, newContent: string) => void
+  onFeedback?: (messageId: string, feedback: 'like' | 'dislike' | null) => void
   onDelete?: (messageId: string) => void
   onShare?: (message: Message) => void
   onToggleStar?: (messageId: string) => void
@@ -133,6 +135,8 @@ const MessageItem = memo(function MessageItem({
   enter = true,
   onRegenerate,
   onEdit,
+  onUpdateContent,
+  onFeedback,
   onDelete,
   onShare,
   onToggleStar,
@@ -263,7 +267,7 @@ const MessageItem = memo(function MessageItem({
   }
 
   // ---------- 助手消息 ----------
-  const [feedback, setFeedback] = useState<'like' | 'dislike' | null>(null)
+  const [feedback, setFeedback] = useState<'like' | 'dislike' | null>(() => message.feedback ?? null)
   const [playingSpeech, setPlayingSpeech] = useState(false)
 
   // 消息卸载或切换时停止朗读
@@ -501,6 +505,7 @@ const MessageItem = memo(function MessageItem({
               onClick={() => {
                 const next = feedback === 'like' ? null : 'like'
                 setFeedback(next)
+                onFeedback?.(message.id, next)
                 if (next) showToast('感谢您的反馈！', 'success')
               }}
             >
@@ -521,6 +526,7 @@ const MessageItem = memo(function MessageItem({
               onClick={() => {
                 const next = feedback === 'dislike' ? null : 'dislike'
                 setFeedback(next)
+                onFeedback?.(message.id, next)
                 if (next) showToast('已记录反馈，我们将持续优化', 'info')
               }}
             >
@@ -591,11 +597,15 @@ const MessageItem = memo(function MessageItem({
               >
                 复制
               </button>
-              {onEdit && (
+              {(onUpdateContent || onEdit) && (
                 <button
                   type="button"
                   onClick={() => {
-                    onEdit(message.id, rewriteResult)
+                    if (onUpdateContent) {
+                      onUpdateContent(message.id, rewriteResult)
+                    } else if (onEdit) {
+                      onEdit(message.id, rewriteResult)
+                    }
                     setRewriteResult(null)
                     showToast('已替换为改写内容', 'success')
                   }}

@@ -70,6 +70,8 @@ export interface Message {
   currentVariantIndex?: number
   /** 是否收藏/星标该消息 */
   starred?: boolean
+  /** 评价反馈（点赞或点踩） */
+  feedback?: 'like' | 'dislike' | null
   /** 用户消息携带的附件 */
   attachments?: Attachment[]
   /** 联网搜索引用 */
