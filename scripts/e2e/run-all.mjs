@@ -211,7 +211,13 @@ try {
   await waitFor(BASE + '/', '前端', 120000)
   await waitFor(MOCK + '/v1/models', '闪测模型')
   console.log('  三个服务就绪')
-  await ensureMockProvider()
+  // 多用户模式（phase6）还没建管理员，注册服务商会 401/403——那不是致命错误，
+  // 该套件测的是登录与隔离，不需要模型。其它套件缺了它才会连锁失败。
+  try {
+    await ensureMockProvider()
+  } catch (e) {
+    console.log('  跳过闪测服务商注册：' + String(e.message || e).split('\n')[0])
+  }
   if (!execScript && !wanted.length) {
     console.log('  提示：phase6（多用户）需独立环境，默认不跑——')
     console.log('        WEB_PORT=5181 PORT=4101 MULTI_USER=true FLYCHAT_DATA_DIR=.shots/mu-data \\')
