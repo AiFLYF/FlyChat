@@ -6,7 +6,8 @@ import {
   savePreset as apiSavePreset,
   updatePreset as apiUpdatePreset,
 } from '../api/client'
-import type { Preset } from '../types'
+import type { Preset, Settings } from '../types'
+import { useChatStore } from './chat'
 
 interface PresetState {
   presets: Preset[]
@@ -22,7 +23,7 @@ interface PresetState {
   duplicatePreset: (id: string, name?: string) => Promise<Preset>
 }
 
-export const usePresetStore = create<PresetState>((set) => ({
+export const usePresetStore = create<PresetState>((set, get) => ({
   presets: [],
   activePresetId: null,
   loading: false,
@@ -31,7 +32,32 @@ export const usePresetStore = create<PresetState>((set) => ({
 
   setModalOpen: (open, preset = null) => set({ modalOpen: open, editingPreset: preset }),
 
-  setActivePresetId: (id) => set({ activePresetId: id }),
+  /**
+   * 激活预设时把它的模型 / 提示词 / 采样参数写进当前设置。
+   *
+   * 之前只记了一个 activePresetId，但发送时前端总会带上 settings.model，
+   * 服务端看到「显式指定了模型」就不会用预设的模型——预设绑定的模型等于失效。
+   * 这里按「预设是默认值」的语义落一次：用户之后仍可以在模型选择器里改，
+   * 改完就是显式覆盖，行为符合预期。
+   */
+  setActivePresetId: (id) => {
+    set({ activePresetId: id })
+    const preset = id ? get().presets.find((p) => p.id === id) : null
+    if (!preset) return
+    const patch: Partial<Settings> = {}
+    if (preset.provider) patch.provider = preset.provider
+    if (preset.model) patch.model = preset.model
+    if (preset.systemPrompt) patch.systemPrompt = preset.systemPrompt
+    const p = preset.params
+    if (p) {
+      if (typeof p.temperature === 'number') patch.temperature = p.temperature
+      if (typeof p.topP === 'number') patch.topP = p.topP
+      if (typeof p.maxTokens === 'number') patch.maxTokens = p.maxTokens
+      if (typeof p.webSearch === 'boolean') patch.webSearch = p.webSearch
+      if (typeof p.think === 'boolean') patch.thinking = p.think
+    }
+    if (Object.keys(patch).length > 0) useChatStore.getState().updateSettings(patch)
+  },
 
   fetchPresets: async () => {
     try {

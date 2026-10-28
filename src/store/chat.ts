@@ -189,6 +189,16 @@ export const useChatStore = create<ChatState>()(
             settings: {
               ...state.settings,
               systemPrompt: prompt,
+              // 切回助手会话时恢复它绑定的模型。
+              // 只恢复提示词不恢复模型，会让「用 A 助手创建的会话」在切回来之后
+              // 继续用 B 会话的模型发请求，轻则答非所问，重则 provider/model 对不上直接报错。
+              ...(assistant
+                ? {
+                    provider: assistant.provider || state.settings.provider,
+                    model: assistant.model || state.settings.model,
+                    temperature: assistant.temperature ?? state.settings.temperature,
+                  }
+                : {}),
             },
           })
         } else {

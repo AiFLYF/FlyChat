@@ -445,9 +445,13 @@ export default function ChatWindow() {
       const assistant = conversation?.assistantId
         ? state.assistants.find((a) => a.id === conversation.assistantId)
         : undefined
-      const systemPrompt = assistant?.systemPrompt?.trim()
-        ? assistant.systemPrompt
-        : settings.systemPrompt
+      // 会话级提示词优先于助手默认值：用户在顶部卡片里改过之后，
+      // 下一轮必须用改后的内容，否则界面显示「已更新」但实际还在用旧提示词。
+      const systemPrompt = conversation?.systemPrompt?.trim()
+        ? conversation.systemPrompt
+        : assistant?.systemPrompt?.trim()
+          ? assistant.systemPrompt
+          : settings.systemPrompt
       addMessage(conversationId, {
         id: assistantId,
         role: 'assistant',
