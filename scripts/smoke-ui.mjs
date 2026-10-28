@@ -5,32 +5,11 @@
  *
  * 用法：node scripts/smoke-ui.mjs [baseURL]
  */
-import { createRequire } from 'node:module'
 import { mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import os from 'node:os'
 
-// Playwright 解析（可移植）：
-// 1) 优先尝试项目本地依赖（执行 `npm i -D playwright` 后可直接运行）；
-// 2) 否则回退到托管 workspace（本机开发环境），可用 PLAYWRIGHT_REQUIRE 指向任意路径。
-// 3) 只装了 playwright-core 也能跑——它不带浏览器二进制，改用系统 Chrome（channel: chrome）。
-// 回退路径用 homedir 推导，别写死用户名（写死过 C:/Users/f/...，换机就 Module Not Found）。
-const requireLocal = createRequire(import.meta.url)
-const fallbackRoot =
-  process.env.PLAYWRIGHT_REQUIRE || `${os.homedir().replace(/\\/g, '/')}/.workbuddy-ai/binaries/node/workspace/`
-let chromium
-let useSystemChrome = false
-try {
-  ;({ chromium } = requireLocal('playwright'))
-} catch {
-  const requireFallback = createRequire(fallbackRoot.endsWith('/') ? fallbackRoot : fallbackRoot + '/')
-  try {
-    ;({ chromium } = requireFallback('playwright'))
-  } catch {
-    ;({ chromium } = requireFallback('playwright-core'))
-    useSystemChrome = true
-  }
-}
+// Playwright 解析统一放在 scripts/lib/playwright.mjs（可移植，换机不用改）
+import { chromium, useSystemChrome } from './lib/playwright.mjs'
 
 // 目标地址：env BASE_URL > 命令行参数 > Vite 默认 5173（与 vite.config.ts 对齐）
 const base = process.env.BASE_URL || process.argv[2] || 'http://127.0.0.1:5173'
@@ -130,9 +109,17 @@ for (const s of LAYOUTS) {
       errors.push(`[${tag}] 设置里缺少全局系统提示词输入框`)
     } else {
       await page.evaluate(() => {
+        // Modal 的面板是 overflow-hidden，真正滚动的是内部 body；
+        // 直接改面板的 scrollTop 不会动，截图会一直停在顶部。
         const d = document.querySelector('[role="dialog"]')
         const p = document.querySelector('#global-system-prompt')
-        if (d && p) d.scrollTop = p.getBoundingClientRect().top - d.getBoundingClientRect().top - 80
+        if (!d || !p) return
+        const scroller =
+          [...d.querySelectorAll('*')].find((el) => {
+            const cs = getComputedStyle(el)
+            return /(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4
+          }) || d
+        scroller.scrollTop += p.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 80
       })
       await page.mouse.move(4, 4)
       await page.waitForTimeout(200)
@@ -187,8 +174,14 @@ for (const s of LAYOUTS) {
   // 滚到底：主题分段控件 + 快捷开关 + 数据区
   await page.mouse.move(4, 4)
   await page.evaluate(() => {
-    const p = document.querySelector('[role="dialog"]')
-    if (p) p.scrollTop = p.scrollHeight
+    const d = document.querySelector('[role="dialog"]')
+    if (!d) return
+    const scroller =
+      [...d.querySelectorAll('*')].find((el) => {
+        const cs = getComputedStyle(el)
+        return /(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4
+      }) || d
+    scroller.scrollTop = scroller.scrollHeight
   })
   await page.waitForTimeout(400)
   await page.screenshot({ path: `${out}smoke-${tag}-settings-bottom.png` })
@@ -198,9 +191,18 @@ for (const s of LAYOUTS) {
   const themeBtn = page.getByRole('button', { name: opposite })
   if (await themeBtn.count()) {
     await themeBtn.click()
-    const animOn = await page.evaluate(() =>
-      document.documentElement.classList.contains('theme-anim')
-    )
+    // 这个类只挂 260ms，单次 evaluate 很容易正好错过（之前就是这么误报的），
+    // 改成在窗口内轮询：出现过就算通过。
+    let animOn = true
+    try {
+      await page.waitForFunction(
+        () => document.documentElement.classList.contains('theme-anim'),
+        null,
+        { timeout: 1200, polling: 20 }
+      )
+    } catch {
+      animOn = false
+    }
     await page.waitForTimeout(90)
     await page.screenshot({ path: `${out}smoke-${tag}-theme-switch.png` })
     await page.waitForTimeout(420)
@@ -213,12 +215,21 @@ for (const s of LAYOUTS) {
     await page.waitForTimeout(300)
   }
 
-  // 退场动画断言
+  // 退场动画断言：退场只有 200ms，单次取样经常正好落在卸载之后，
+  // 用 MutationObserver 记录「是否出现过 modal-sink」，比抓某一帧可靠。
+  await page.evaluate(() => {
+    window.__modalExitSeen = false
+    window.__modalObs = new MutationObserver(() => {
+      const p = document.querySelector('[role="dialog"]')
+      if (p && getComputedStyle(p).animationName === 'modal-sink') window.__modalExitSeen = true
+    })
+    window.__modalObs.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class'] })
+  })
   await page.getByRole('button', { name: '关闭' }).first().click()
-  await page.waitForTimeout(70)
+  await page.waitForTimeout(120)
   const exiting = await page.evaluate(() => {
-    const p = document.querySelector('[role="dialog"]')
-    return p ? getComputedStyle(p).animationName : 'unmounted'
+    window.__modalObs?.disconnect()
+    return window.__modalExitSeen ? 'modal-sink' : 'unmounted'
   })
   if (exiting !== 'modal-sink') errors.push(`[${tag}] 弹窗退场动画缺失: ${exiting}`)
   await page.screenshot({ path: `${out}smoke-${tag}-settings-exit.png` })
