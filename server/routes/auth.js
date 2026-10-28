@@ -171,7 +171,7 @@ router.post(
       // 知识库表还没建好时不影响初始化
     }
 
-    const { token } = createSession(user.id, { userAgent: req.get('user-agent') })
+    const { token } = createSession(user.id, { userAgent: req.get('user-agent'), ttlMs: TTL_MS() })
     res.setHeader('Set-Cookie', cookieFor(token))
     inc('auth_setup_total')
     res.status(201).json({ ok: true, user, claimedConversations: claimed })
@@ -202,7 +202,7 @@ router.post(
 
     clearLoginFailure(clientIp)
     cleanupSessions()
-    const { token } = createSession(user.id, { userAgent: req.get('user-agent') })
+    const { token } = createSession(user.id, { userAgent: req.get('user-agent'), ttlMs: TTL_MS() })
     res.setHeader('Set-Cookie', cookieFor(token))
     inc('auth_login_total')
     res.json({ ok: true, user })

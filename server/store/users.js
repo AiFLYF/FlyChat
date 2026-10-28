@@ -243,18 +243,20 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 天
 function tokenHash(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex')
 }
-
 /** 创建登录会话，返回明文 token（只在这一次返回，之后库里只有 hash） */
-export function createSession(userId, { userAgent } = {}) {
+export function createSession(userId, { userAgent, ttlMs } = {}) {
   const token = crypto.randomBytes(32).toString('base64url')
   const t = now()
+  // 有效期由调用方决定：config.auth.sessionDays 是唯一事实源。
+  // 之前这里写死 30 天，导致「设置 7 天」只改了 Cookie，数据库里的会话仍然有效 30 天。
+  const ttl = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : SESSION_TTL_MS
   getDb()
     .prepare(
       `INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at, user_agent)
        VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(tokenHash(token), String(userId), t, t + SESSION_TTL_MS, t, userAgent ? String(userAgent).slice(0, 200) : null)
-  return { token, expiresAt: t + SESSION_TTL_MS }
+    .run(tokenHash(token), String(userId), t, t + ttl, t, userAgent ? String(userAgent).slice(0, 200) : null)
+  return { token, expiresAt: t + ttl }
 }
 
 /** 用 token 查用户；过期或用户被禁用都视为无效 */
