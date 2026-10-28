@@ -3,6 +3,7 @@ import { asyncHandler, AppError } from '../lib/errors.js'
 import { checkBudget } from '../store/budget.js'
 import { generateImage, imageStatus } from '../images/index.js'
 import { inc } from '../lib/metrics.js'
+import { recordSideCall } from '../lib/side-usage.js'
 
 const router = Router()
 
@@ -43,6 +44,14 @@ router.post(
     })
 
     inc('image_generated_total', { provider: result.provider })
+    // 之前只检查预算、从不记账：连续生成图片永远不会推高已花费金额，
+    // 「硬上限」对图片等于不存在。
+    recordSideCall('image', {
+      provider: result.provider,
+      model: result.model,
+      units: Array.isArray(result.data) && result.data.length ? result.data.length : Number(n) || 1,
+      latencyMs: result.tookMs,
+    })
 
     // 有些客户端显式要 url（默认），也有要 b64_json 的；
     // 上游给什么就给什么，只在明确要 b64 而拿到 url 时提示一下，不硬转

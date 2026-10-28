@@ -34,6 +34,11 @@ function readBool(name, fallback) {
   return !['0', 'false', 'off', 'no'].includes(raw)
 }
 
+function readFloat(name, fallback) {
+  const raw = Number.parseFloat(process.env[name] ?? '')
+  return Number.isFinite(raw) && raw >= 0 ? raw : fallback
+}
+
 function readList(name) {
   return (process.env[name] ?? '')
     .split(',')
@@ -183,10 +188,20 @@ export const config = {
     depth: process.env.TAVILY_SEARCH_DEPTH === 'advanced' ? 'advanced' : 'basic',
   },
 
+  pricing: {
+    /**
+     * 非对话类调用的单次成本（美元），用于预算统计。
+     * 图片/语音/搜索按次计费、没有 token 数，不配置就记 0——
+     * 至少请求条数可见，配了价格后预算上限才对这几类入口生效。
+     */
+    imagePerCall: readFloat('IMAGE_COST_USD', 0),
+    audioPerCall: readFloat('AUDIO_COST_USD', 0),
+    searchPerCall: readFloat('SEARCH_COST_USD', 0),
+  },
+
   rag: {
     /**
      * 网页入库是否拒绝内网/回环地址。
-     *
      * 单用户自托管默认**允许**（用户自己贴局域网文档服务地址是真实需求）；
      * 多用户模式默认**拒绝**——否则任何普通用户都能让服务端去读内网页面，
      * 再把内容当成自己知识库的文档读出来。

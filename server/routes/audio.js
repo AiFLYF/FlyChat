@@ -4,6 +4,8 @@ import { resolveProvider } from '../providers/registry.js'
 import { parseDataUrl } from '../providers/format.js'
 import { inc, observe } from '../lib/metrics.js'
 import { config } from '../config.js'
+import { checkBudget } from '../store/budget.js'
+import { recordSideCall } from '../lib/side-usage.js'
 
 const router = Router()
 
@@ -33,6 +35,10 @@ router.post(
     const { provider: providerId, model = 'whisper-1', audio, name, language, prompt } = req.body || {}
     if (!audio) throw badRequest('缺少 audio（data URL 或 base64）', 'missing_audio')
     if (!providerId) throw badRequest('缺少 provider', 'missing_provider')
+
+    // 语音也是花钱的：预算检查与记账之前完全没做，硬上限形同虚设
+    const budget = checkBudget()
+    if (!budget.allowed) throw new AppError(budget.message, { status: 429, code: budget.code })
 
     const provider = requireCompatibleProvider(providerId)
 
@@ -74,6 +80,11 @@ router.post(
     }
     const json = await upstream.json().catch(() => ({}))
     inc('audio_transcribe_total')
+    recordSideCall('audio', {
+      provider: provider.id,
+      model: String(model),
+      latencyMs: Date.now() - startedAt,
+    })
     res.json({ text: json.text || '', language: json.language || null, duration: json.duration ?? null })
   })
 )
@@ -93,6 +104,9 @@ router.post(
     if (!input || !String(input).trim()) throw badRequest('缺少 input 文本', 'missing_input')
     if (!providerId) throw badRequest('缺少 provider', 'missing_provider')
     if (String(input).length > 4096) throw badRequest('文本过长（上限 4096 字符）', 'input_too_long')
+
+    const budget = checkBudget()
+    if (!budget.allowed) throw new AppError(budget.message, { status: 429, code: budget.code })
 
     const provider = requireCompatibleProvider(providerId)
     const upstream = await fetch(`${provider.baseUrl}/audio/speech`, {
@@ -123,6 +137,7 @@ router.post(
     res.setHeader('Cache-Control', 'no-store')
     const buffer = Buffer.from(await upstream.arrayBuffer())
     inc('audio_speech_total')
+    recordSideCall('audio', { provider: provider.id, model: String(model) })
     res.send(buffer)
   })
 )

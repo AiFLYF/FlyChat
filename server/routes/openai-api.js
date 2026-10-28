@@ -318,6 +318,8 @@ router.post(
 
     const toolBuffer = []
     let usage = null
+    let outText = ''
+    let upstream = null
 
     try {
       const result = await streamChat(provider, {
@@ -329,7 +331,10 @@ router.post(
         tools,
         toolChoice,
         abortSignal: abort.signal,
-        onDelta: (text) => send(base({ content: text })),
+        onDelta: (text) => {
+          outText += text
+          send(base({ content: text }))
+        },
         onUsage: (u) => {
           usage = u
         },
@@ -337,6 +342,8 @@ router.post(
           toolBuffer[index] = call
         },
       })
+
+      upstream = result
 
       for (const [index, call] of (result?.toolCalls || toolBuffer).entries()) {
         send(
@@ -376,6 +383,24 @@ router.post(
       }
       inc('openai_api_errors_total', { code: err?.code || 'unknown' })
     } finally {
+      // 流式分支之前完全不记账：客户端用 stream:true 就能无限调用而不推高已花费金额，
+      // 预算的「硬上限」只对非流式请求有效。这里按实际 usage 记账，拿不到就估算。
+      const finalUsage = usage || {
+        prompt: estimateMessagesTokens(messages),
+        completion: estimateTokens(outText),
+        total: estimateMessagesTokens(messages) + estimateTokens(outText),
+        estimated: true,
+      }
+      recordUsage({
+        provider: upstream?.provider?.id || provider.id,
+        model: upstream?.model || model,
+        prompt: finalUsage.prompt,
+        completion: finalUsage.completion,
+        total: finalUsage.total,
+        costUsd: estimateCost(info, finalUsage),
+        latencyMs: Date.now() - startedAt,
+        status: abort.signal.aborted ? 'aborted' : 'ok',
+      })
       closed = true
       try {
         res.end()

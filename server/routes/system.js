@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { config, configWarnings } from '../config.js'
-import { badRequest, unavailable } from '../lib/errors.js'
+import { AppError, badRequest, unavailable } from '../lib/errors.js'
 import { metricsSnapshot } from '../lib/metrics.js'
 import { breakerSnapshot } from '../lib/resilience.js'
 import { storageStatus } from '../store/db.js'
@@ -14,6 +14,7 @@ import { countUsers } from '../store/users.js'
 import { imageStatus } from '../images/index.js'
 import { asyncHandler } from '../lib/errors.js'
 import { requireAdmin } from '../lib/auth.js'
+import { recordSideCall } from '../lib/side-usage.js'
 
 const router = Router()
 
@@ -151,7 +152,12 @@ router.post(
     const query = String(req.body?.query || '').trim()
     if (!query) throw badRequest('缺少 query', 'missing_query')
     if (!isSearchConfigured()) throw badRequest('未配置联网搜索服务', 'search_unavailable')
+    // 搜索按次计费（Tavily/Brave/Serper 都是），同样要过预算并记账
+    const budget = checkBudget()
+    if (!budget.allowed) throw new AppError(budget.message, { status: 429, code: budget.code })
+    const startedAt = Date.now()
     const result = await webSearch(query, { maxResults: req.body?.maxResults })
+    recordSideCall('search', { provider: result?.provider || 'search', latencyMs: Date.now() - startedAt })
     res.json(result)
   })
 )

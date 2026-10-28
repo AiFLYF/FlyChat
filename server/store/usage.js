@@ -16,13 +16,14 @@ export function recordUsage({
   costUsd = 0,
   latencyMs = null,
   status = 'ok',
+  kind = 'chat',
 } = {}) {
   try {
     getDb()
       .prepare(
         `INSERT INTO usage_events
-         (conversation_id, provider, model, prompt, completion, total, cost_usd, latency_ms, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (conversation_id, provider, model, prompt, completion, total, cost_usd, latency_ms, status, kind, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         conversationId ? String(conversationId) : null,
@@ -34,6 +35,7 @@ export function recordUsage({
         Number(costUsd) || 0,
         latencyMs == null ? null : Math.round(Number(latencyMs) || 0),
         status,
+        kind,
         Date.now()
       )
   } catch {

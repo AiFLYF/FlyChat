@@ -179,3 +179,27 @@ test('未知 /v1 路径返回 JSON 404（不是前端 HTML）', async () => {
   const body = await res.json()
   assert.equal(body.error.type, 'invalid_request_error')
 })
+
+test('流式请求也记账：预算上限对 stream 同样生效', async () => {
+  const { getDb } = await import('../store/db.js')
+  const db = getDb()
+  const countBefore = db.prepare("SELECT COUNT(*) AS n FROM usage_events WHERE kind = 'chat'").get().n
+
+  const res = await v1('/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'mock-model',
+      messages: [{ role: 'user', content: '记账测试' }],
+      stream: true,
+    }),
+  })
+  await res.text()
+
+  const countAfter = db.prepare("SELECT COUNT(*) AS n FROM usage_events WHERE kind = 'chat'").get().n
+  assert.equal(countAfter, countBefore + 1, '流式请求结束后必须落一条用量记录')
+
+  const row = db.prepare("SELECT * FROM usage_events WHERE kind = 'chat' ORDER BY id DESC LIMIT 1").get()
+  assert.ok(row.total >= 20, `token 数应来自上游 usage，实际 ${row.total}`)
+  assert.equal(row.status, 'ok')
+})
