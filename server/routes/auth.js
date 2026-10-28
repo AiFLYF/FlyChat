@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { asyncHandler, badRequest } from '../lib/errors.js'
+import { asyncHandler, badRequest, AppError } from '../lib/errors.js'
 import { config } from '../config.js'
 import {
   authenticate,
@@ -23,6 +23,41 @@ import { logger } from '../lib/logger.js'
 const router = Router()
 
 const TTL_MS = () => config.auth.sessionDays * 24 * 60 * 60 * 1000
+
+// 登录防暴力破解：单 IP 连续失败达到上限后锁定一段时间
+const loginFailures = new Map()
+const MAX_LOGIN_FAILURES = 10
+const LOCKOUT_MS = 10 * 60 * 1000
+
+function checkLoginLockout(ip) {
+  const record = loginFailures.get(ip)
+  if (!record) return
+  if (Date.now() - record.firstFailedAt > LOCKOUT_MS) {
+    loginFailures.delete(ip)
+    return
+  }
+  if (record.count >= MAX_LOGIN_FAILURES) {
+    const remainingSec = Math.ceil((LOCKOUT_MS - (Date.now() - record.firstFailedAt)) / 1000)
+    throw new AppError(`登录失败次数过多，请在 ${remainingSec} 秒后再试`, {
+      status: 429,
+      code: 'login_locked_out',
+    })
+  }
+}
+
+function recordLoginFailure(ip) {
+  const now = Date.now()
+  const record = loginFailures.get(ip)
+  if (!record || now - record.firstFailedAt > LOCKOUT_MS) {
+    loginFailures.set(ip, { count: 1, firstFailedAt: now })
+  } else {
+    record.count += 1
+  }
+}
+
+function clearLoginFailure(ip) {
+  loginFailures.delete(ip)
+}
 
 /** 生产环境走 HTTPS 时加 Secure；本机 http 调试不能加，否则 cookie 不会被保存 */
 function cookieFor(token) {
@@ -143,16 +178,20 @@ router.post(
     if (!storageStatus().available) {
       throw badRequest('服务端持久化不可用，无法登录', 'storage_unavailable')
     }
+    const clientIp = req.ip || 'unknown'
+    checkLoginLockout(clientIp)
     const { username, password } = req.body || {}
     if (!username || !password) throw badRequest('请输入用户名和密码', 'missing_credentials')
 
     const user = authenticate(String(username).trim(), String(password))
     if (!user) {
       inc('auth_login_failed_total')
+      recordLoginFailure(clientIp)
       // 不区分「用户不存在」与「密码错」，避免被拿来枚举账号
       throw badRequest('用户名或密码不正确', 'invalid_credentials')
     }
 
+    clearLoginFailure(clientIp)
     cleanupSessions()
     const { token } = createSession(user.id, { userAgent: req.get('user-agent') })
     res.setHeader('Set-Cookie', cookieFor(token))
