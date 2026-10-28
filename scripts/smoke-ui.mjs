@@ -8,19 +8,28 @@
 import { createRequire } from 'node:module'
 import { mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import os from 'node:os'
 
 // Playwright 解析（可移植）：
 // 1) 优先尝试项目本地依赖（执行 `npm i -D playwright` 后可直接运行）；
 // 2) 否则回退到托管 workspace（本机开发环境），可用 PLAYWRIGHT_REQUIRE 指向任意路径。
+// 3) 只装了 playwright-core 也能跑——它不带浏览器二进制，改用系统 Chrome（channel: chrome）。
+// 回退路径用 homedir 推导，别写死用户名（写死过 C:/Users/f/...，换机就 Module Not Found）。
 const requireLocal = createRequire(import.meta.url)
+const fallbackRoot =
+  process.env.PLAYWRIGHT_REQUIRE || `${os.homedir().replace(/\\/g, '/')}/.workbuddy-ai/binaries/node/workspace/`
 let chromium
+let useSystemChrome = false
 try {
   ;({ chromium } = requireLocal('playwright'))
 } catch {
-  const requireFallback = createRequire(
-    (process.env.PLAYWRIGHT_REQUIRE || 'C:/Users/f/.workbuddy-ai/binaries/node/workspace/') + '/'
-  )
-  ;({ chromium } = requireFallback('playwright'))
+  const requireFallback = createRequire(fallbackRoot.endsWith('/') ? fallbackRoot : fallbackRoot + '/')
+  try {
+    ;({ chromium } = requireFallback('playwright'))
+  } catch {
+    ;({ chromium } = requireFallback('playwright-core'))
+    useSystemChrome = true
+  }
 }
 
 // 目标地址：env BASE_URL > 命令行参数 > Vite 默认 5173（与 vite.config.ts 对齐）
@@ -31,6 +40,7 @@ mkdirSync(out, { recursive: true })
 const errors = []
 // 本机有 http_proxy 环境变量，Chromium 会走代理导致 localhost 不可达
 const browser = await chromium.launch({
+  ...(useSystemChrome ? { channel: 'chrome' } : {}),
   args: ['--no-proxy-server', '--proxy-bypass-list=<-loopback>'],
 })
 
@@ -110,6 +120,10 @@ for (const s of LAYOUTS) {
 
   // 系统提示词：填入后关闭/重载/重开，确认 IndexedDB 自动持久化
   if (tag === 'desktop-light') {
+    // 「全局系统提示词」现在归在「提示词与助手」标签下（默认打开的是「常规与模型」），
+    // 不先切标签会误报「设置里缺少全局系统提示词输入框」。
+    await page.getByRole('tab', { name: '提示词与助手' }).first().click()
+    await page.waitForTimeout(500)
     const systemPrompt = page.getByLabel('全局系统提示词')
     const probe = 'smoke 系统提示词持久化检查'
     if ((await systemPrompt.count()) === 0) {
@@ -134,6 +148,9 @@ for (const s of LAYOUTS) {
       await page.waitForTimeout(800)
       await page.getByRole('button', { name: '设置' }).first().click()
       await page.waitForTimeout(700)
+      // 重载后标签回到默认项，同样要先切回「提示词与助手」
+      await page.getByRole('tab', { name: '提示词与助手' }).first().click()
+      await page.waitForTimeout(500)
       const restored = await page.getByLabel('全局系统提示词').inputValue().catch(() => '')
       if (restored !== probe) errors.push(`[${tag}] 系统提示词未持久化：${JSON.stringify(restored)}`)
       await page.getByLabel('全局系统提示词').fill('')

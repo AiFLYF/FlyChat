@@ -2,9 +2,14 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+// 后端端口跟 server/config.js 的 PORT 保持一致。
+// 3001 被别的程序占用、或落进 Windows 的保留端口段（netsh interface ipv4 show excludedportrange）
+// 时，用 `PORT=3011 npm run dev` 一起改，前端代理自动跟上。
+const apiTarget = `http://localhost:${process.env.PORT || 3001}`
+
 const apiProxy = {
   '/api': {
-    target: 'http://localhost:3001',
+    target: apiTarget,
     changeOrigin: true,
   },
 }

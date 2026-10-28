@@ -39,6 +39,12 @@ export async function startMockUpstream(options = {}) {
     statuses = [],
     /** 正常返回的文本分片 */
     chunks = ['你好', '，世界'],
+    /**
+     * 按请求内容动态决定分片（可选）。
+     * 返回 null/undefined 时退回 chunks。给 dev 用的 mock-flash 按提示词切换回复用，
+     * 这样一条命令就能同时演示「普通回复」和「HTML 构件」两条路径。
+     */
+    resolveChunks = null,
     /** usage 上报 */
     usage = { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20 },
     /** 收到第 N 个请求时先吐一个分片再直接断开连接 */
@@ -238,7 +244,8 @@ export async function startMockUpstream(options = {}) {
       }
 
       const scriptedText = plan?.text
-      const scriptedChunks = scriptedText ? [scriptedText] : chunks
+      const dynamicChunks = !scriptedText && resolveChunks ? resolveChunks(state.lastBody) : null
+      const scriptedChunks = scriptedText ? [scriptedText] : dynamicChunks || chunks
 
       if (isAnthropic) {
         res.write(

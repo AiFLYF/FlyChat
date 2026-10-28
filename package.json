@@ -21,7 +21,8 @@
     "smoke:api": "node scripts/smoke-api.mjs",
     "smoke": "node scripts/smoke-ui.mjs",
     "mock:flash": "node scripts/mock-flash.mjs",
-    "audit:ui": "python scripts/audit-ui.py"
+    "audit:ui": "python scripts/audit-ui.py",
+    "test:e2e": "node scripts/e2e/run-all.mjs"
   },
   "dependencies": {
     "concurrently": "^9.1.2",
