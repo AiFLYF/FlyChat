@@ -12,7 +12,7 @@ import {
   listDocuments,
   listWorkspaces,
 } from '../rag/store.js'
-import { pendingCount, removeUpload, retryDocument } from '../rag/jobs.js'
+import { isDocumentId, pendingCount, removeUpload, retryDocument } from '../rag/jobs.js'
 import { retrieve, submitDocument, toSources } from '../rag/index.js'
 import { resolveEmbeddingProvider, defaultEmbeddingModel } from '../rag/embeddings.js'
 import { inspectBaseUrl } from '../lib/ssrf.js'
@@ -23,6 +23,14 @@ const router = Router()
 const requireStorage = (req, _res, next) => {
   if (!storageStatus().available) {
     return next(unavailable('服务端持久化不可用，知识库功能不可用', 'storage_unavailable'))
+  }
+  next()
+}
+
+/** 文档 id 只允许服务端生成的 doc-<16 hex>，防止 ../ 路径穿越到 uploads 之外 */
+const requireDocumentId = (req, _res, next) => {
+  if (!isDocumentId(req.params.id)) {
+    return next(badRequest('文档 id 非法', 'invalid_document_id'))
   }
   next()
 }
@@ -120,7 +128,7 @@ router.post('/documents/:id/retry', requireStorage, (req, res, next) => {
   res.json({ ok: true })
 })
 
-router.delete('/documents/:id', requireStorage, (req, res) => {
+router.delete('/documents/:id', requireStorage, requireDocumentId, (req, res) => {
   const ok = deleteDocument(req.params.id)
   // 行删没删掉都顺手清掉临时文件
   removeUpload(req.params.id)

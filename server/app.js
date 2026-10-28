@@ -110,17 +110,39 @@ export function createApp() {
   })
 
   // —— CORS ——
-  app.use(
-    cors({
-      origin(origin, callback) {
-        if (!origin) return callback(null, true) // curl / 同源请求
-        if (config.cors.origins.length === 0) return callback(null, true)
-        if (config.cors.origins.includes(origin)) return callback(null, true)
-        return callback(new AppError(`来源 ${origin} 不在 CORS_ORIGINS 白名单内`, { status: 403, code: 'cors_denied' }))
-      },
-      credentials: false,
-    })
-  )
+  // 默认不再“任意来源放行”：只允许同源、本机来源或显式白名单。
+  // 这样恶意网页不能借浏览器直接调用 localhost 的 MCP 注册/探测接口。
+  app.use((req, _res, next) => {
+    const origin = req.get('origin')
+    if (!origin) return next() // curl / 同源请求通常不带 Origin
+    if (config.cors.origins.includes(origin)) return next()
+
+    let parsed
+    try {
+      parsed = new URL(origin)
+    } catch {
+      return next(new AppError(`来源 ${origin} 不合法`, { status: 403, code: 'cors_denied' }))
+    }
+
+    // 同源请求不需要 CORS；局域网用 IP 访问时也必须放行。
+    if (parsed.host === req.get('host')) return next()
+
+    // 未显式配置白名单时，只额外允许本机前端（Vite 代理/本机调试）。
+    if (
+      config.cors.origins.length === 0 &&
+      ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)
+    ) {
+      return next()
+    }
+
+    return next(
+      new AppError(`来源 ${origin} 不在 CORS_ORIGINS 白名单内`, {
+        status: 403,
+        code: 'cors_denied',
+      })
+    )
+  })
+  app.use(cors({ origin: true, credentials: false }))
 
   app.use(express.json({ limit: config.limits.bodyBytes }))
 

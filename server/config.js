@@ -115,7 +115,7 @@ export const config = {
   },
 
   cors: {
-    /** 为空表示不限制来源（本机开发）；生产建议显式列出 */
+    /** 额外允许的跨域来源；为空时只允许同源与本机来源，不再任意放行 */
     origins: readList('CORS_ORIGINS'),
   },
 
@@ -194,7 +194,7 @@ export function configWarnings() {
     warnings.push('监听 0.0.0.0 且未设置 FLYCHAT_ACCESS_TOKEN：局域网内任何人都能修改服务商配置')
   }
   if (config.cors.origins.length === 0 && config.env === 'production') {
-    warnings.push('生产环境未设置 CORS_ORIGINS：任意站点都能调用本服务')
+    warnings.push('生产环境未设置 CORS_ORIGINS：仅允许同源与本机来源；跨域前端请显式配置白名单')
   }
   return warnings
 }

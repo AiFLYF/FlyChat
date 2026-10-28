@@ -29,8 +29,21 @@ function uploadDir() {
   return path.join(config.storage.dataDir, 'uploads')
 }
 
+/** 服务端生成的文档 id 格式；外部传入的 id 必须先过这一关 */
+const DOC_ID_RE = /^doc-[a-f0-9]{16}$/
+
+export function isDocumentId(docId) {
+  return DOC_ID_RE.test(String(docId || ''))
+}
+
 export function uploadPath(docId) {
-  return path.join(uploadDir(), String(docId))
+  const id = String(docId || '')
+  if (!isDocumentId(id)) throw new Error('非法文档 id')
+  const base = path.resolve(uploadDir())
+  const target = path.resolve(base, id)
+  // 双保险：即使 id 规则以后放宽，也不允许逃出 uploads 目录
+  if (!target.startsWith(`${base}${path.sep}`)) throw new Error('非法文档路径')
+  return target
 }
 
 /** 把前端传来的 dataUrl 落盘 */

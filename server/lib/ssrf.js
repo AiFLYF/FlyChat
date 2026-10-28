@@ -53,6 +53,13 @@ function ipv6Kind(host) {
   // IPv4 映射地址（::ffff:127.0.0.1）
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(h)
   if (mapped) return ipv4Kind(mapped[1])
+  // 十六进制写法的 IPv4 映射（::ffff:7f00:1 → 127.0.0.1）
+  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(h)
+  if (mappedHex) {
+    const hi = parseInt(mappedHex[1], 16)
+    const lo = parseInt(mappedHex[2], 16)
+    return ipv4Kind(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`)
+  }
   if (/^f[cd]/.test(h)) return 'private' // fc00::/7
   if (/^fe[89ab]/.test(h)) return 'link-local'
   return 'public'
@@ -79,7 +86,9 @@ export function inspectBaseUrl(raw) {
   if (url.username || url.password) {
     return { ok: false, reason: 'Base URL 不能包含用户名或密码' }
   }
-  const host = url.hostname.toLowerCase()
+  // URL.hostname 对 IPv6 会保留方括号（[::1]），必须先去掉，
+  // 否则 net.isIP 返回 0，后面的字面量校验会被整体绕过。
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
   if (BLOCKED_HOSTNAMES.has(host)) {
     return { ok: false, reason: `禁止访问 ${host}（云元数据地址）` }
   }

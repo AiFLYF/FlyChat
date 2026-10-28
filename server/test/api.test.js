@@ -372,6 +372,24 @@ test('全量导出 → 导入（merge / replace）', async () => {
   await api('/api/conversations/conv-export-1', { method: 'DELETE' })
 })
 
+test('CORS：默认拒绝任意公网来源，同源与本机来源放行', async () => {
+  const evil = await api('/api/health', {
+    headers: { Origin: 'https://evil.example' },
+  })
+  assert.equal(evil.status, 403, '未配置白名单时不能对任意站点放行')
+  assert.equal((await evil.json()).code, 'cors_denied')
+
+  const same = await api('/api/health', {
+    headers: { Origin: server.url },
+  })
+  assert.equal(same.status, 200, '同源请求必须放行')
+
+  const local = await api('/api/health', {
+    headers: { Origin: 'http://localhost:5173' },
+  })
+  assert.equal(local.status, 200, '本机 Vite 前端必须放行')
+})
+
 test('默认单用户模式：不需要登录，/api/auth/me 明确说 multiUser=false', async () => {
   const me = await json(await api('/api/auth/me'))
   assert.equal(me.status, 200)

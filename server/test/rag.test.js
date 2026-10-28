@@ -347,3 +347,11 @@ test('网页入库：内网/元数据地址在提交时就被拒绝', async () =
   assert.equal(notHttp.status, 400)
   assert.equal((await notHttp.json()).code, 'unsafe_url')
 })
+
+test('文档删除：编码后的路径穿越 id 必须被拒绝', async () => {
+  const res = await fetch(`${server.url}/api/documents/..%2F..%2Fserver%2F.env`, {
+    method: 'DELETE',
+  })
+  assert.equal(res.status, 400)
+  assert.equal((await res.json()).code, 'invalid_document_id')
+})

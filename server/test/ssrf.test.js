@@ -28,6 +28,32 @@ test('inspectBaseUrl：默认允许回环与内网（Ollama / 局域网网关是
   assert.equal(inspectBaseUrl('http://10.0.0.5/v1').ok, true)
 })
 
+test('inspectBaseUrl：IPv6 字面量必须识别为回环/内网/链路本地', () => {
+  const loop = inspectBaseUrl('http://[::1]:3001')
+  assert.equal(loop.ok, true)
+  assert.equal(loop.private, true)
+
+  const mapped = inspectBaseUrl('http://[::ffff:7f00:1]/')
+  assert.equal(mapped.private, true, '::ffff:7f00:1 是 127.0.0.1 的十六进制映射')
+
+  const private6 = inspectBaseUrl('http://[fd00::1]/')
+  assert.equal(private6.private, true)
+
+  const link = inspectBaseUrl('http://[::ffff:a9fe:a9fe]/')
+  assert.equal(link.ok, false, '::ffff:a9fe:a9fe 是 169.254.169.254 的映射')
+})
+
+test('validateBaseUrl：rejectPrivate 必须拦住 IPv6 字面量', async () => {
+  for (const url of [
+    'http://[::1]:3001/api/health',
+    'http://[::ffff:7f00:1]/',
+    'http://[fd00::1]/',
+  ]) {
+    const r = await validateBaseUrl(url, { rejectPrivate: true })
+    assert.equal(r.ok, false, url)
+  }
+})
+
 test('validateBaseUrl：域名解析到被禁地址时拒绝', async () => {
   const r = await validateBaseUrl('http://169.254.169.254')
   assert.equal(r.ok, false)
