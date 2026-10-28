@@ -416,3 +416,24 @@ test('默认单用户模式：不需要登录，/api/auth/me 明确说 multiUser
   assert.equal(setup.status, 400)
   assert.equal((await setup.json()).code, 'multi_user_disabled')
 })
+
+test('全量导出：超过单页 200 条也不截断', async () => {
+  // listConversations 单次最多返回 200 条；导出如果不分页，第 201 条起会被静默丢掉，
+  // 用户以为做了完整备份，其实换机后少了一半会话。
+  const { upsertConversation } = await import('../store/conversations.js')
+  const total = 205
+  for (let i = 0; i < total; i += 1) {
+    upsertConversation({
+      id: `conv-export-${i}`,
+      title: `导出用例 ${i}`,
+      messages: [{ id: `conv-export-msg-${i}`, role: 'user', content: `第 ${i} 条` }],
+    })
+  }
+
+  const res = await api('/api/export')
+  assert.equal(res.status, 200)
+  const payload = await res.json()
+  assert.equal(payload.format, 'flychat-export')
+  assert.ok(payload.count >= total, `应导出全部会话，实际 ${payload.count}`)
+  assert.ok(payload.conversations.some((c) => c.id === 'conv-export-204'), '最后一条也必须在内')
+})

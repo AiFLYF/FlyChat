@@ -131,9 +131,17 @@ router.get('/conversations/:id/export', (req, res, next) => {
  * 「数据是我的」是自托管产品的底线能力，也方便换机/迁移到别的实例。
  */
 router.get('/export', (req, res) => {
-  const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 500))
   const userId = currentUserId(req)
-  const { items } = listConversations({ limit, offset: 0, userId })
+  // 分页取全量：listConversations 单次最多 200 条，直接传 limit 会被静默截断，
+  // 用户以为备份完整，实际超过 200 条的会话全丢了。
+  const max = Math.min(10000, Math.max(1, Number(req.query.limit) || 10000))
+  const pageSize = 200
+  const items = []
+  for (let offset = 0; offset < max; offset += pageSize) {
+    const page = listConversations({ limit: Math.min(pageSize, max - offset), offset, userId }).items
+    items.push(...page)
+    if (page.length < pageSize) break
+  }
   const conversations = items
     .map((c) => getConversation(c.id, { userId }))
     .filter(Boolean)
