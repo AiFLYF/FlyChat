@@ -221,7 +221,7 @@ function toUnits(messages: Message[]) {
 }
 
 export default function ChatWindow() {
-  const conversations = useChatStore((s) => s.conversations)
+  const active = useChatStore((s) => s.conversations.find((c) => c.id === s.activeId) ?? null)
   const activeId = useChatStore((s) => s.activeId)
   const settings = useChatStore((s) => s.settings)
   const sidebarOpen = useChatStore((s) => s.sidebarOpen)
@@ -249,6 +249,8 @@ export default function ChatWindow() {
   const fillComposer = useComposer((s) => s.fill)
 
   const [providers, setProviders] = useState<ProviderInfo[]>([])
+  /** 服务商列表加载态：loading 时不能把「还没拿到」当成「没配置」 */
+  const [providersState, setProvidersState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [webSearchAvailable, setWebSearchAvailable] = useState(false)
   const [streamingIds, setStreamingIds] = useState<string[]>([])
   const [notice, setNotice] = useState('')
@@ -273,7 +275,7 @@ export default function ChatWindow() {
   const pinnedRef = useRef(true)
   const titledRef = useRef<Set<string>>(new Set())
 
-  const active = conversations.find((c) => c.id === activeId) ?? null
+
   const currentAssistant = active?.assistantId
     ? assistants.find((a) => a.id === active.assistantId)
     : null
@@ -293,11 +295,27 @@ export default function ChatWindow() {
   }, [notice])
 
   // 获取可用提供商（输入门控与自动选型）
-  useEffect(() => {
+  //
+  // 三态而不是「空数组 + 布尔」：providers 初始就是 []，若只有「有/没有」两种状态，
+  // 首屏请求还没回来的那几百毫秒会被渲染成「服务端还没有配置 API Key」，
+  // 用户会误以为自己要配 Key（实测本地就有一次截图正好抓到这一帧）。
+  // 同理请求失败也不能当成「没配置」——那是两件完全不同的事。
+  //
+  // 失败自动退避重试两次：首屏这一次请求经常撞上后端/代理还没就绪的瞬间
+  // （实测多用户模式启动时首屏就抓到过一帧「无法连接服务端」，后端其实是活的），
+  // 一次抖动就报错会让用户以为服务挂了。重试期间保持 loading，不闪错误态。
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const loadProviders = useCallback((attempt = 0) => {
+    if (retryTimer.current) {
+      clearTimeout(retryTimer.current)
+      retryTimer.current = null
+    }
+    setProvidersState('loading')
     fetchProviders()
       .then(({ providers: list, webSearch }) => {
         setProviders(list)
         setWebSearchAvailable(webSearch)
+        setProvidersState('ready')
         if (list.length === 0) return
         const state = useChatStore.getState()
         const current = list.find((p) => p.id === state.settings.provider)
@@ -310,8 +328,22 @@ export default function ChatWindow() {
         }
         if (Object.keys(patch).length) state.updateSettings(patch)
       })
-      .catch(() => setProviders([]))
+      .catch(() => {
+        if (attempt < 2) {
+          retryTimer.current = setTimeout(() => loadProviders(attempt + 1), 800 * (attempt + 1))
+          return
+        }
+        setProviders([])
+        setProvidersState('error')
+      })
   }, [])
+
+  useEffect(() => {
+    loadProviders()
+    return () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current)
+    }
+  }, [loadProviders])
 
   // 页面卸载 / 切到后台时强制落盘挂起状态，避免流式生成期间关闭页面丢失最近的对话
   useEffect(() => {
@@ -359,12 +391,28 @@ export default function ChatWindow() {
       ? settings.compareModels.length > 0
       : !!settings.provider && !!settings.model)
 
+  /** 输入框禁用时的提示：区分「还在加载」「连不上后端」「没配 Key」「没选模型」 */
+  const composerHint =
+    providersState === 'loading'
+      ? '正在加载可用模型…'
+      : providersState === 'error'
+        ? '无法连接服务端，请点「重试」'
+        : providers.length === 0
+          ? '请先在 server/.env 配置 API Key 并重启后端'
+          : '请先在上方选择模型'
+
   const targets: Target[] = useMemo(() => {
     if (settings.compareEnabled && settings.compareModels.length > 0) {
-      return settings.compareModels.map((k) => {
-        const [provider, model] = k.split('::')
-        return { provider, model }
-      })
+      const list = settings.compareModels
+        .map((k) => {
+          const idx = k.indexOf('::')
+          if (idx <= 0) return null
+          const provider = k.slice(0, idx)
+          const model = k.slice(idx + 2)
+          return provider && model ? { provider, model } : null
+        })
+        .filter((t): t is Target => !!t)
+      if (list.length > 0) return list
     }
     return [{ provider: settings.provider, model: settings.model }]
   }, [settings.compareEnabled, settings.compareModels, settings.provider, settings.model])
@@ -420,7 +468,15 @@ export default function ChatWindow() {
 
       try {
         const activePreset = usePresetStore.getState().presets.find((p) => p.id === usePresetStore.getState().activePresetId)
-        const activeWorkspaceId = useKnowledgeStore.getState().activeWorkspaceId || activePreset?.workspaceId
+        // 只有「确实会用得上知识库」时才带 workspaceId：
+        //   · 预设显式绑定了工作区 → 用户明确要求检索这个库
+        //   · 当前工作区里已有 ready 文档 → 有东西可检索
+        // 否则不带。后端契约是「带 workspaceId 就用知识库、检索不到就回提示」，
+        // 无脑带上会让空库用户的每条消息都挂一条「没有检索到相关内容」。
+        const knowledgeState = useKnowledgeStore.getState()
+        const hasReadyDoc = knowledgeState.documents.some((d) => d.status === 'ready')
+        const activeWorkspaceId =
+          activePreset?.workspaceId || (hasReadyDoc ? knowledgeState.activeWorkspaceId : undefined)
 
         await streamChat(
           {
@@ -717,9 +773,13 @@ export default function ChatWindow() {
       '',
       `> 导出自 FlyChat · ${new Date().toLocaleString('zh-CN')}`,
       '',
-      ...active.messages.map(
-        (m) => `**${m.role === 'user' ? '用户' : 'AI'}**：\n\n${m.content}\n\n---\n`
-      ),
+      ...active.messages.map((m) => {
+        const roleLabel = m.role === 'user' ? '用户' : m.model ? `AI (${m.model})` : 'AI'
+        const reasoningBlock = m.reasoning
+          ? `<details>\n<summary>思考过程</summary>\n\n${m.reasoning}\n</details>\n\n`
+          : ''
+        return `**${roleLabel}**：\n\n${reasoningBlock}${m.content}\n\n---\n`
+      }),
     ]
     downloadText(`${safeFileName(active.title)}.md`, lines.join('\n'), 'text/markdown;charset=utf-8')
     showToast('已导出 Markdown 文件', 'success')
@@ -779,9 +839,9 @@ export default function ChatWindow() {
       </div>
 
       {/* 结构化分类灵感卡片 */}
-      <div className="mt-5 px-1">
-        <div className="flex items-center justify-between gap-1.5 mb-3">
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+      <div className="mt-5 px-1 max-w-full overflow-hidden">
+        <div className="flex items-center justify-between gap-1.5 mb-3 max-w-full">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 min-w-0 flex-1 scrollbar-none">
             {CATEGORY_PROMPTS.map((cat, idx) => (
               <button
                 key={cat.category}
@@ -832,7 +892,7 @@ export default function ChatWindow() {
                   <span className="truncate">{item.title}</span>
                   <div className="flex items-center gap-1 shrink-0">
                     {item.tag && (
-                      <span className="rounded bg-hover px-1.5 py-0.5 text-[9px] font-normal text-ink-4 group-hover:text-accent group-hover:bg-accent/10 transition-colors">
+                      <span className="rounded bg-hover px-1.5 py-0.5 text-[9px] font-normal text-ink-3 group-hover:text-accent group-hover:bg-accent/10 transition-colors">
                         {item.tag}
                       </span>
                     )}
@@ -924,7 +984,6 @@ export default function ChatWindow() {
                   {/* 与「上下文」按钮一致：窄屏只留图标，其余屏位补文字 */}
                   <span className="hidden sm:inline">导出</span>
                 </button>
-                <div onMouseLeave={() => setExportOpen(false)}>
                   <MenuPanel
                     open={exportOpen}
                     position="absolute right-0 top-9 z-40 w-40"
@@ -959,7 +1018,6 @@ export default function ChatWindow() {
                       图片
                     </MenuItem>
                   </MenuPanel>
-                </div>
               </div>
             </>
           )}
@@ -1014,9 +1072,13 @@ export default function ChatWindow() {
                   className="anim-fade-up mx-auto mt-2 max-w-md text-sm leading-6 text-ink-2"
                   style={{ animationDelay: staggerDelay(2, 60) }}
                 >
-                  {ready
-                    ? '支持流式输出、思考过程、公式与图表、图片文档上传、联网搜索与多模型对比。'
-                    : '服务端还没有配置 API Key。把 server/.env.example 复制为 server/.env，填入至少一个提供商的 Key 后重启后端。'}
+                  {providersState === 'loading'
+                    ? '正在连接服务端，读取可用模型…'
+                    : providersState === 'error'
+                      ? '无法连接服务端。请确认后端已启动，然后点下方「重试」。'
+                      : ready
+                        ? '支持流式输出、思考过程、公式与图表、图片文档上传、联网搜索与多模型对比。'
+                        : '服务端还没有配置 API Key。把 server/.env.example 复制为 server/.env，填入至少一个提供商的 Key 后重启后端。'}
                 </p>
               </div>
             </div>
@@ -1029,20 +1091,18 @@ export default function ChatWindow() {
                 onStop={handleStop}
                 streaming={streaming}
                 disabled={!ready}
-                disabledHint={
-                  providers.length === 0
-                    ? '请先在 server/.env 配置 API Key 并重启后端'
-                    : '请先在上方选择模型'
-                }
+                disabledHint={composerHint}
                 webSearchAvailable={webSearchAvailable}
               />
 
-              {!ready && (
+              {!ready && providersState !== 'loading' && (
                 <button
-                  onClick={() => setShowSettings(true)}
+                  onClick={() =>
+                    providersState === 'error' ? loadProviders() : setShowSettings(true)
+                  }
                   className="press hover-lift r-sm mx-auto mt-4 flex w-fit items-center gap-1.5 bg-accent px-4 py-2 text-sm font-medium text-on-accent transition-ui"
                 >
-                  去设置
+                  {providersState === 'error' ? '重试' : '去设置'}
                 </button>
               )}
             </div>
@@ -1119,7 +1179,7 @@ export default function ChatWindow() {
                   const m = unit.items[0].message
                   const isLastAssistant =
                     m.role === 'assistant' &&
-                    !active!.messages.slice(unit.items[0].index + 1).some((x) => x.role === 'assistant')
+                    !active?.messages.slice(unit.items[0].index + 1).some((x) => x.role === 'assistant')
                   return (
                     <MessageItem
                       key={m.id}
@@ -1129,6 +1189,8 @@ export default function ChatWindow() {
                       enter={enter}
                       onRegenerate={handleRegenerate}
                       onEdit={m.role === 'user' ? handleEdit : undefined}
+                      onUpdateContent={(messageId, content) => active && updateMessage(active.id, messageId, { content })}
+                      onFeedback={(messageId, feedback) => active && updateMessage(active.id, messageId, { feedback })}
                       onDelete={handleDelete}
                       onShare={(msg) => setShareTarget(msg)}
                       onToggleStar={(messageId) => active && toggleMessageStar(active.id, messageId)}
@@ -1171,11 +1233,7 @@ export default function ChatWindow() {
                 onStop={handleStop}
                 streaming={streaming}
                 disabled={!ready}
-                disabledHint={
-                  providers.length === 0
-                    ? '请先在 server/.env 配置 API Key 并重启后端'
-                    : '请先在上方选择模型'
-                }
+                disabledHint={composerHint}
                 webSearchAvailable={webSearchAvailable}
               />
             </div>
