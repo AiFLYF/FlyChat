@@ -87,6 +87,7 @@ export default function Composer({
   const [dragOver, setDragOver] = useState(false)
   const [listening, setListening] = useState(false)
   const recognitionRef = useRef<{ stop: () => void } | null>(null)
+  const baseTextRef = useRef('')
   const hasSpeech = isSpeechRecognitionSupported()
 
   const toggleListening = () => {
@@ -95,9 +96,11 @@ export default function Composer({
       setListening(false)
     } else {
       setError('')
+      baseTextRef.current = text.trim()
       const rec = startSpeechRecognition({
         onResult: (chunk) => {
-          setText(chunk)
+          const prefix = baseTextRef.current ? baseTextRef.current + ' ' : ''
+          setText(prefix + chunk)
           taRef.current?.focus()
         },
         onError: (err) => {
@@ -148,16 +151,6 @@ export default function Composer({
     if (focusToken > 0) taRef.current?.focus()
   }, [focusToken])
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        taRef.current?.focus()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
 
   const submit = () => {
     const value = text.trim()
