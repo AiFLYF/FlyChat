@@ -13,7 +13,7 @@ import { useDismiss } from '../lib/useDismiss'
 import type { MarketAssistant } from '../types'
 
 import { showToast } from './ui/Toast'
-import { FIELD, BUTTON_PRIMARY, BUTTON_GHOST } from '../lib/ui'
+import { BUTTON_GHOST, BUTTON_PRIMARY, FIELD, LABEL } from '../lib/ui'
 
 interface Props {
   open: boolean
@@ -189,7 +189,7 @@ export default function AssistantMarketModal({ open, onClose }: Props) {
 
             <div className="grid grid-cols-12 gap-3">
               <div className="col-span-3 sm:col-span-2">
-                <label className="mb-1 block text-xs font-medium text-ink-2">图标 Emoji</label>
+                <label className={LABEL}>图标 Emoji</label>
                 <input
                   type="text"
                   maxLength={4}
@@ -199,7 +199,7 @@ export default function AssistantMarketModal({ open, onClose }: Props) {
                 />
               </div>
               <div className="col-span-9 sm:col-span-10">
-                <label className="mb-1 block text-xs font-medium text-ink-2">智能体名称 *</label>
+                <label className={LABEL}>智能体名称 *</label>
                 <input
                   required
                   type="text"
@@ -226,7 +226,7 @@ export default function AssistantMarketModal({ open, onClose }: Props) {
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-medium text-ink-2">智能体简要描述</label>
+              <label className={LABEL}>智能体简要描述</label>
               <input
                 type="text"
                 placeholder="例如：专注于微服务架构、DDD 领域驱动设计与系统高并发设计..."
@@ -237,7 +237,7 @@ export default function AssistantMarketModal({ open, onClose }: Props) {
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-medium text-ink-2">
+              <label className={LABEL}>
                 核心设定与系统提示词 (System Prompt) *
               </label>
               <textarea

@@ -59,3 +59,18 @@ export const EMPTY_HINT = 'px-3 py-6 text-center text-xs leading-5 text-ink-3'
 
 /** 分组小标题 */
 export const GROUP_LABEL = 'px-2 pb-1 text-[11px] font-medium tracking-wide text-ink-3'
+
+/**
+ * 表单字段标签。
+ * 这几处 label 都没有 htmlFor（字段是自己包的，不是原生 form 关联），
+ * 所以输入框本身必须带 aria-label，否则读屏读不出名称。
+ */
+export const LABEL = 'mb-1 block text-xs font-medium text-ink-2'
+
+/**
+ * 自绘遮罩层（没有走 ui/Modal 的那几个弹窗）。
+ * 与 Modal 的遮罩刻意不同：这里用的是不透明更高的黑 + 毛玻璃，
+ * 因为这些弹窗内容更密、背景更花。统一在这里是为了四处的层级/内边距保持一致。
+ */
+export const OVERLAY =
+  'fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm anim-fade-in'

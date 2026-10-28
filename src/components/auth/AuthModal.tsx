@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { KeyRound, Lock, User, X } from 'lucide-react'
 import { useAuthStore } from '../../store/auth'
-import { FIELD, BUTTON_PRIMARY, ICON_BTN_SM } from '../../lib/ui'
+import { BUTTON_PRIMARY, FIELD, ICON_BTN_SM, LABEL, OVERLAY } from '../../lib/ui'
 import { BrandLogo } from '../ui/BrandLogo'
 
 export default function AuthModal() {
@@ -21,6 +21,18 @@ export default function AuthModal() {
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+
+  // Esc 关闭：只在「已登录、主动来改密码」时允许。
+  // 初始化管理员和登录是强制流程，Esc 把人关在门外等于让应用没法用，
+  // 所以这里不能像其它弹窗那样无条件响应。
+  useEffect(() => {
+    if (!modalOpen || !user) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setModalOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [modalOpen, user, setModalOpen])
 
   // 当不需要登录或不是多用户模式时，不显示
   if (!isMulti || (!isSetup && user) || !modalOpen) {
@@ -77,8 +89,13 @@ export default function AuthModal() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm anim-fade-in">
-      <div className="relative w-full max-w-sm rounded-2xl border border-rule bg-panel p-6 shadow-3 anim-modal-rise">
+    <div className={OVERLAY}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={isSetup ? '初始化系统管理员' : '账户登录'}
+        className="relative w-full max-w-sm rounded-2xl border border-rule bg-panel p-6 shadow-3 anim-modal-rise"
+      >
         {/* 如果已经登录了只是手动打开修改，允许关闭；若未登录则强制完成 */}
         {user && (
           <button
@@ -112,7 +129,7 @@ export default function AuthModal() {
           )}
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-ink-2">用户名</label>
+            <label className={LABEL}>用户名</label>
             <div className="relative">
               <User size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
               <input
@@ -129,7 +146,7 @@ export default function AuthModal() {
 
           {isSetup && (
             <div>
-              <label className="mb-1 block text-xs font-medium text-ink-2">显示名称（可选）</label>
+              <label className={LABEL}>显示名称（可选）</label>
               <input
                 type="text"
                 value={displayName}
@@ -141,7 +158,7 @@ export default function AuthModal() {
           )}
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-ink-2">密码</label>
+            <label className={LABEL}>密码</label>
             <div className="relative">
               <Lock size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
               <input
@@ -157,7 +174,7 @@ export default function AuthModal() {
 
           {isSetup && (
             <div>
-              <label className="mb-1 block text-xs font-medium text-ink-2">确认密码</label>
+              <label className={LABEL}>确认密码</label>
               <div className="relative">
                 <KeyRound size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
                 <input

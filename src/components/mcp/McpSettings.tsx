@@ -20,7 +20,7 @@ import {
   setMcpServerTrusted,
   setMcpToolDisabled,
 } from '../../api/client'
-import { BUTTON_PRIMARY, FIELD, ICON_BTN_SM } from '../../lib/ui'
+import { BUTTON_PRIMARY, FIELD, ICON_BTN_SM, LABEL } from '../../lib/ui'
 import type { McpServer, McpTransport } from '../../types'
 
 export default function McpSettings() {
@@ -262,7 +262,7 @@ export default function McpSettings() {
 
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
-              <label className="mb-1 block text-xs font-medium text-ink-2">服务名称 *</label>
+              <label className={LABEL}>服务名称 *</label>
               <input
                 required
                 value={name}
@@ -272,7 +272,7 @@ export default function McpSettings() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-ink-2">传输类型</label>
+              <label className={LABEL}>传输类型</label>
               <select
                 value={transport}
                 onChange={(e) => setTransport(e.target.value as McpTransport)}
@@ -288,7 +288,7 @@ export default function McpSettings() {
             <div className="space-y-3">
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-ink-2">可执行命令 *</label>
+                  <label className={LABEL}>可执行命令 *</label>
                   <input
                     required
                     value={command}
@@ -298,7 +298,7 @@ export default function McpSettings() {
                   />
                 </div>
                 <div className="col-span-2">
-                  <label className="mb-1 block text-xs font-medium text-ink-2">参数 (空格切分)</label>
+                  <label className={LABEL}>参数 (空格切分)</label>
                   <input
                     value={argsStr}
                     onChange={(e) => setArgsStr(e.target.value)}
@@ -308,7 +308,7 @@ export default function McpSettings() {
                 </div>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-ink-2">环境变量 (JSON 格式，可选)</label>
+                <label className={LABEL}>环境变量 (JSON 格式，可选)</label>
                 <textarea
                   rows={2}
                   value={envStr}
@@ -321,7 +321,7 @@ export default function McpSettings() {
           ) : (
             <div className="space-y-3">
               <div>
-                <label className="mb-1 block text-xs font-medium text-ink-2">服务 Base URL *</label>
+                <label className={LABEL}>服务 Base URL *</label>
                 <input
                   required
                   type="url"
@@ -332,7 +332,7 @@ export default function McpSettings() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-ink-2">自定义 Headers (JSON 格式，可选)</label>
+                <label className={LABEL}>自定义 Headers (JSON 格式，可选)</label>
                 <textarea
                   rows={2}
                   value={headersStr}

@@ -107,6 +107,11 @@ export default function ArtifactWorkspace() {
 
   return (
     <div
+      // 桌面端是并排侧栏（region），全屏时是模态浮层（dialog）。
+      // 之前两种形态都没标角色，读屏用户感知不到「新开了一个工作区」。
+      role={isFullscreen ? 'dialog' : 'region'}
+      aria-modal={isFullscreen || undefined}
+      aria-label={activeArtifact.title || '交互式构件'}
       className={`flex flex-col border-l border-rule bg-panel shadow-2 transition-all duration-300 z-30 ${
         isFullscreen
           ? 'fixed inset-0 z-50 w-screen h-screen'

@@ -23,7 +23,7 @@ import { useKnowledgeStore } from '../../store/knowledge'
 import { useChatStore } from '../../store/chat'
 import { retrieveKnowledge } from '../../api/client'
 import type { RetrieveDebugResult } from '../../types'
-import { FIELD, ICON_BTN_SM } from '../../lib/ui'
+import { FIELD, ICON_BTN_SM, OVERLAY } from '../../lib/ui'
 
 export default function KnowledgeModal() {
   const modalOpen = useKnowledgeStore((s) => s.modalOpen)
@@ -206,8 +206,13 @@ export default function KnowledgeModal() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm anim-fade-in">
-      <div className="relative flex max-h-[88vh] w-full max-w-4xl flex-col rounded-2xl border border-rule bg-panel shadow-3 anim-modal-rise overflow-hidden">
+    <div className={OVERLAY}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="知识库与 RAG 检索中心"
+        className="relative flex max-h-[88vh] w-full max-w-4xl flex-col rounded-2xl border border-rule bg-panel shadow-3 anim-modal-rise overflow-hidden"
+      >
         {/* 顶部标题栏 + 标签页切换 */}
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-rule px-5">
           <div className="flex items-center gap-4">

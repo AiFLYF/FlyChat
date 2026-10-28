@@ -41,6 +41,8 @@ export default function PresetSelector({ placement = 'top' }: PresetSelectorProp
         onClick={() => setOpen((v) => !v)}
         className="press hover-lift flex items-center gap-1.5 rounded-lg border border-rule/70 bg-panel px-2.5 py-1 text-xs text-ink-2 shadow-sm hover:border-accent/40 hover:bg-hover hover:text-ink-1 transition-all"
         aria-label="选择预设"
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
         {activePreset ? (
           <>
@@ -63,6 +65,8 @@ export default function PresetSelector({ placement = 'top' }: PresetSelectorProp
 
       {open && (
         <div
+          role="menu"
+          aria-label="预设配置中心"
           className={`absolute left-0 z-40 w-64 rounded-xl border border-rule bg-panel p-1.5 shadow-3 anim-fade-up ${
             placement === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5'
           }`}

@@ -23,6 +23,22 @@ const THEME_OPTIONS: { value: ThemeMode; label: string; icon: React.ReactNode }[
   { value: 'system', label: '跟随系统', icon: <Monitor size={13} /> },
 ]
 
+/**
+ * 设置分类。
+ * 抽成模块级常量有两个原因：标签栏需要在键盘左右方向键间做 roving focus，
+ * 得按下标取下一个；以及窄屏换行后仍要保证每个分类都能点到。
+ */
+const SETTINGS_TABS = [
+  { id: 'general', label: '常规与模型' },
+  { id: 'providers', label: '模型服务' },
+  { id: 'mcp', label: 'MCP 扩展' },
+  { id: 'api', label: 'API 网关' },
+  { id: 'prompts', label: '提示词与助手' },
+  { id: 'data', label: '数据与备份' },
+] as const
+
+type SettingsTabId = (typeof SETTINGS_TABS)[number]['id']
+
 /** 可直接载入的系统提示词起点；用户仍可在下方自由修改 */
 const SYSTEM_PROMPT_PRESETS = [
   {
@@ -244,7 +260,9 @@ export default function SettingsModal() {
   const [notice, setNotice] = useState('')
   const importRef = useRef<HTMLInputElement>(null)
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null)
-  const [tab, setTab] = useState<'general' | 'providers' | 'mcp' | 'api' | 'prompts' | 'data'>('general')
+  const [tab, setTab] = useState<SettingsTabId>('general')
+  // 标签按钮引用，供左右方向键做 roving focus（role=tab 的键盘约定）
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   /**
    * 拉取服务商列表与图像模型状态。抽成独立函数是因为「模型服务」面板增删改之后要重新拉取，
@@ -344,19 +362,34 @@ export default function SettingsModal() {
 
   return (
     <Modal open={open} onClose={() => setOpen(false)} title="设置" className="max-w-2xl">
-      <div className="flex border-b border-rule/70 -mt-2 mb-4 overflow-x-auto text-xs font-medium gap-1 scrollbar-none">
-        {[
-          { id: 'general', label: '常规与模型' },
-          { id: 'providers', label: '模型服务' },
-          { id: 'mcp', label: 'MCP 扩展' },
-          { id: 'api', label: 'API 网关' },
-          { id: 'prompts', label: '提示词与助手' },
-          { id: 'data', label: '数据与备份' },
-        ].map((t) => (
+      {/* 标签栏：窄屏换行而不是横向滚动。
+          原先 overflow-x-auto + scrollbar-none，390px 下「提示词与助手」「数据与备份」
+          两个分类被完全裁掉且没有任何可滚动提示，等于功能不可达（实测 scrollWidth 527 > 324）。 */}
+      <div
+        role="tablist"
+        aria-label="设置分类"
+        className="flex flex-wrap gap-1 border-b border-rule/70 -mt-2 mb-4 text-xs font-medium"
+        onKeyDown={(e) => {
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+          e.preventDefault()
+          const i = SETTINGS_TABS.findIndex((x) => x.id === tab)
+          const next =
+            (i + (e.key === 'ArrowRight' ? 1 : -1) + SETTINGS_TABS.length) % SETTINGS_TABS.length
+          setTab(SETTINGS_TABS[next].id)
+          tabRefs.current[next]?.focus()
+        }}
+      >
+        {SETTINGS_TABS.map((t, i) => (
           <button
             key={t.id}
+            ref={(el) => {
+              tabRefs.current[i] = el
+            }}
             type="button"
-            onClick={() => setTab(t.id as any)}
+            role="tab"
+            aria-selected={tab === t.id}
+            tabIndex={tab === t.id ? 0 : -1}
+            onClick={() => setTab(t.id)}
             className={`press px-3.5 py-2 border-b-2 text-xs sm:text-[13px] font-medium transition-all duration-150 whitespace-nowrap rounded-t-md ${
               tab === t.id
                 ? 'border-accent text-accent bg-accent-soft/40 font-semibold'

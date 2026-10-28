@@ -15,6 +15,8 @@ import KnowledgeModal from './components/knowledge/KnowledgeModal'
 import { useAuthStore } from './store/auth'
 import { useChatStore } from './store/chat'
 import { useComposer } from './store/composer'
+import { useKnowledgeStore } from './store/knowledge'
+import { usePresetStore } from './store/preset'
 import {
   useCommandPaletteOpen,
   useMarketOpen,
@@ -116,6 +118,10 @@ export default function App() {
         setShortcutsOpen(false)
         setUsageOpen(false)
         setCommandOpen(false)
+        setMarketOpen(false)
+        useKnowledgeStore.getState().setModalOpen(false)
+        usePresetStore.getState().setModalOpen(false)
+        useAuthStore.getState().setUserManagementOpen(false)
         return
       }
 

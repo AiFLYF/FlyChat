@@ -16,7 +16,7 @@ import {
   updateUser,
 } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
-import { BUTTON_PRIMARY, FIELD, ICON_BTN_SM } from '../../lib/ui'
+import { BUTTON_PRIMARY, FIELD, ICON_BTN_SM, OVERLAY } from '../../lib/ui'
 import type { AuthUser, UserRole } from '../../types'
 
 export default function UserManagementModal() {
@@ -154,8 +154,13 @@ export default function UserManagementModal() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm anim-fade-in">
-      <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl border border-rule bg-panel shadow-3 anim-modal-rise overflow-hidden">
+    <div className={OVERLAY}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="用户管理"
+        className="relative flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl border border-rule bg-panel shadow-3 anim-modal-rise overflow-hidden"
+      >
         {/* 标题栏 */}
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-rule px-5">
           <div className="flex items-center gap-2">

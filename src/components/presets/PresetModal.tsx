@@ -5,7 +5,7 @@ import { useKnowledgeStore } from '../../store/knowledge'
 import { useChatStore } from '../../store/chat'
 import { fetchImageStatus } from '../../api/client'
 import type { ImageStatus } from '../../types'
-import { BUTTON_PRIMARY, FIELD, ICON_BTN_SM } from '../../lib/ui'
+import { BUTTON_PRIMARY, FIELD, ICON_BTN_SM, LABEL, OVERLAY } from '../../lib/ui'
 
 export default function PresetModal() {
   const modalOpen = usePresetStore((s) => s.modalOpen)
@@ -116,8 +116,13 @@ export default function PresetModal() {
   const QUICK_ICONS = ['🤖', '⌨️', '✍️', '🎨', '💼', '🔬', '💡', '🔍', '📊', '🛡️']
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm anim-fade-in">
-      <div className="relative flex max-h-[90vh] w-full max-w-xl flex-col rounded-2xl border border-rule bg-panel shadow-3 anim-modal-rise overflow-hidden">
+    <div className={OVERLAY}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={editingPreset ? '编辑预设' : '新建配置预设'}
+        className="relative flex max-h-[90vh] w-full max-w-xl flex-col rounded-2xl border border-rule bg-panel shadow-3 anim-modal-rise overflow-hidden"
+      >
         {/* 标题 */}
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-rule px-5">
           <div className="flex items-center gap-2">
@@ -141,11 +146,12 @@ export default function PresetModal() {
           {/* 基础信息 */}
           <div className="grid grid-cols-12 gap-3">
             <div className="col-span-3">
-              <label className="mb-1 block text-xs font-medium text-ink-2">图标 Emoji</label>
+              <label className={LABEL}>图标 Emoji</label>
               <div className="flex items-center gap-1.5">
                 <input
                   type="text"
                   maxLength={4}
+                  aria-label="预设图标"
                   value={icon}
                   onChange={(e) => setIcon(e.target.value)}
                   className={`${FIELD} text-center text-lg`}
@@ -153,10 +159,11 @@ export default function PresetModal() {
               </div>
             </div>
             <div className="col-span-9">
-              <label className="mb-1 block text-xs font-medium text-ink-2">预设名称 *</label>
+              <label className={LABEL}>预设名称 *</label>
               <input
                 required
                 type="text"
+                aria-label="预设名称"
                 placeholder="例如：全栈工程师 / 法律文档审查"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -181,7 +188,7 @@ export default function PresetModal() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-ink-2">简要描述</label>
+            <label className={LABEL}>简要描述</label>
             <input
               type="text"
               placeholder="专注编写健壮可读的现代代码..."
@@ -193,7 +200,7 @@ export default function PresetModal() {
 
           {/* 系统提示词 */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-ink-2">系统提示词 (System Prompt)</label>
+            <label className={LABEL}>系统提示词 (System Prompt)</label>
             <textarea
               rows={4}
               placeholder="你是一个专业的 AI 助手，在回答时保持条理清晰..."
@@ -206,7 +213,7 @@ export default function PresetModal() {
           {/* 模型与工作区绑定 */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-ink-2">指定模型 (可选)</label>
+              <label className={LABEL}>指定模型 (可选)</label>
               <input
                 type="text"
                 placeholder="如 deepseek-chat 或 gpt-4o"
@@ -216,7 +223,7 @@ export default function PresetModal() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-ink-2">绑定知识库工作区</label>
+              <label className={LABEL}>绑定知识库工作区</label>
               <select
                 value={workspaceId}
                 onChange={(e) => setWorkspaceId(e.target.value)}
