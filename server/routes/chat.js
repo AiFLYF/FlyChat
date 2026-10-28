@@ -17,6 +17,7 @@ import { messageChain } from '../store/conversations.js'
 import { storageStatus } from '../store/db.js'
 import { checkBudget } from '../store/budget.js'
 import { summarizeDropped, wrapSummary } from '../lib/compact.js'
+import { describeUpstreamError } from '../lib/resilience.js'
 import { webSearch, buildSearchContext, isSearchConfigured } from '../search/index.js'
 import { recordUsage } from '../store/usage.js'
 import { getPreset } from '../store/presets.js'
@@ -286,6 +287,8 @@ router.post('/chat', async (req, res, next) => {
     }
 
     // —— 知识库检索：命中则注入上下文并回传来源 ——
+    // 契约：只要请求带了 workspaceId（或 knowledge:true），就视为「用户要用知识库」，
+    // 空库时回一条提示而不是静默编造。前端据此只在确有可用文档时才带 workspaceId。
     if (body.workspaceId || body.knowledge === true) {
       const workspaceId = String(body.workspaceId || 'default')
       try {
@@ -332,7 +335,8 @@ router.post('/chat', async (req, res, next) => {
               : `已把较早的 ${dropped.length} 条消息总结为摘要，以适配模型上下文`,
           })
         } else if (result?.failed) {
-          stream.send({ type: 'notice', message: `历史摘要生成失败，已改为直接裁剪：${result.error}` })
+          const safeErr = String(result.error || '').replace(/sk-[a-zA-Z0-9_\-]{6,}/g, 'sk-***').slice(0, 120)
+          stream.send({ type: 'notice', message: `历史摘要生成失败，已改为直接裁剪${safeErr ? `：${safeErr}` : ''}` })
         }
       }
     }
@@ -525,7 +529,12 @@ router.post('/chat', async (req, res, next) => {
     }
     log.error('对话失败', { message: err?.message, code: err?.code, status: err?.status })
     inc('chat_errors_total', { provider: provider.id, code: err?.code || 'unknown' })
-    stream.send({ type: 'error', message: err?.message || '上游请求失败', code: err?.code || 'upstream_error' })
+    // 给用户看翻译过的中文提示；原始 message 已经在日志里
+    stream.send({
+      type: 'error',
+      message: describeUpstreamError(err, { providerName: provider.name || provider.id }),
+      code: err?.code || 'upstream_error',
+    })
     finish('error', err)
   }
 })

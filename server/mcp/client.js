@@ -124,8 +124,13 @@ export class McpClient {
       const { command, args = [], env = {} } = this.config
       if (!command) return reject(new Error('stdio 传输需要 command'))
 
-      // 安全起见不让 MCP server 继承我们自己的密钥
-      const cleanEnv = { ...process.env, ...env }
+      // 安全起见不让 MCP server 继承服务端的大模型密钥或访问令牌
+      const cleanEnv = {}
+      for (const [k, v] of Object.entries(process.env)) {
+        if (/api_?key|secret|token|password|auth/i.test(k)) continue
+        cleanEnv[k] = v
+      }
+      Object.assign(cleanEnv, env)
       delete cleanEnv.FLYCHAT_ACCESS_TOKEN
 
       const child = spawn(command, args, { env: cleanEnv, stdio: ['pipe', 'pipe', 'pipe'] })

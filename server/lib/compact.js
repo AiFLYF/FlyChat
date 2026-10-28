@@ -89,13 +89,18 @@ export async function summarizeDropped({ dropped, provider, signal, useCache = t
 
   summary = summary.trim().slice(0, 4000)
   if (!summary) return null
-  if (useCache) {    saveSummary({
+  if (useCache) {
+    try {
+      saveSummary({
       prefixKey,
       summary,
       messageCount: dropped.length,
       tokens: Math.ceil(summary.length / 2),
       model: summarizerModel,
     })
+    } catch {
+      /* 缓存保存失败不影响主流程 */
+    }
   }
   return { summary, cached: false, tokens: Math.ceil(summary.length / 2), model: summarizerModel }
 }
