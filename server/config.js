@@ -182,6 +182,18 @@ export const config = {
     maxResults: readInt('TAVILY_MAX_RESULTS', 5, 1, 10),
     depth: process.env.TAVILY_SEARCH_DEPTH === 'advanced' ? 'advanced' : 'basic',
   },
+
+  rag: {
+    /**
+     * 网页入库是否拒绝内网/回环地址。
+     *
+     * 单用户自托管默认**允许**（用户自己贴局域网文档服务地址是真实需求）；
+     * 多用户模式默认**拒绝**——否则任何普通用户都能让服务端去读内网页面，
+     * 再把内容当成自己知识库的文档读出来。
+     * 确实需要放开时设 ALLOW_PRIVATE_INGEST=1。
+     */
+    rejectPrivateIngest: readBool('ALLOW_PRIVATE_INGEST', false) ? false : readBool('MULTI_USER', false),
+  },
 }
 
 /** 启动时把「配置缺失但不致命」的问题收集起来，由 /api/health 与日志展示 */

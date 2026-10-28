@@ -2,6 +2,7 @@ import { parseDataUrl } from './providers/format.js'
 import { logger } from './lib/logger.js'
 import { htmlToText, extractHtmlTitle } from './lib/html.js'
 import { assertSafeBaseUrl } from './lib/ssrf.js'
+import { config } from './config.js'
 
 /** 抽取文本上限，避免超长文档撑爆上下文 */
 const MAX_CHARS = 200000
@@ -470,7 +471,8 @@ async function readBodyLimited(response, maxBytes) {
 async function fetchFollowingSafely(startUrl, { signal } = {}) {
   let current = String(startUrl).trim()
   for (let hop = 0; hop <= URL_MAX_REDIRECTS; hop += 1) {
-    await assertSafeBaseUrl(current)
+    // 多用户模式默认拒绝内网：否则普通用户能借服务端把内网页面读成自己的文档
+    await assertSafeBaseUrl(current, { rejectPrivate: config.rag.rejectPrivateIngest })
     const res = await fetch(current, {
       redirect: 'manual',
       signal: signal || AbortSignal.timeout(URL_TIMEOUT_MS),

@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { asyncHandler, badRequest, notFound, unavailable } from '../lib/errors.js'
 import { inc } from '../lib/metrics.js'
-import { requireAdmin } from '../lib/auth.js'
+import { requireAdmin, isAdmin } from '../lib/auth.js'
 import { storageStatus } from '../store/db.js'
 import {
   deleteServer,
@@ -24,12 +24,21 @@ const requireStorage = (req, _res, next) => {
   next()
 }
 
-router.get('/mcp/servers', requireStorage, (_req, res) => {
-  res.json({ items: listServers() })
+router.get('/mcp/servers', requireStorage, (req, res) => {
+  const items = listServers()
+  // args 里经常带 --token=xxx / --api-key=xxx（例如 GitHub MCP server 的写法），
+  // 之前注释说「读取不含敏感值」是错的：普通登录用户也能看到完整命令行。
+  if (!isAdmin(req)) {
+    for (const item of items) {
+      delete item.command
+      delete item.args
+    }
+  }
+  res.json({ items })
 })
 
 // —— 写操作一律 admin（多用户模式）：注册 stdio server 等于允许在服务器上执行
-// 任意命令（RCE），普通用户绝不能碰。读取保持登录即可，工具定义本身不含敏感值。 ——
+// 任意命令（RCE），普通用户绝不能碰。读取对普通用户脱敏后可见。 ——
 router.post('/mcp/servers', requireStorage, requireAdmin, (req, res, next) => {
   try {
     const server = upsertServer(req.body || {})

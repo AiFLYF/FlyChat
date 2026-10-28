@@ -17,6 +17,7 @@ import { retrieve, submitDocument, toSources } from '../rag/index.js'
 import { resolveEmbeddingProvider, defaultEmbeddingModel } from '../rag/embeddings.js'
 import { inspectBaseUrl } from '../lib/ssrf.js'
 import { currentUserId } from '../lib/auth.js'
+import { config } from '../config.js'
 
 const router = Router()
 
@@ -95,6 +96,10 @@ router.post('/documents', requireStorage, (req, res, next) => {
   if (url) {
     const inspected = inspectBaseUrl(url)
     if (!inspected.ok) return next(badRequest(inspected.reason, 'unsafe_url'))
+    // 多用户模式在提交阶段就拦住内网地址，不要等排队到后台抓取时才失败
+    if (config.rag.rejectPrivateIngest && inspected.private) {
+      return next(badRequest(`禁止把内网或回环地址加入知识库：${url}`, 'unsafe_url'))
+    }
   }
 
   try {

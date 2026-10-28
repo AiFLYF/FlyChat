@@ -340,6 +340,55 @@ test('MCP 管理只允许 admin：普通用户写 403，读不受限', async () 
   mcpServerId = okCreate.body.id
 })
 
+test('MCP 列表对普通用户脱敏：args / command 不返回', async () => {
+  const asAdmin = client(adminCookie)
+  const created = await asAdmin.json('/api/mcp/servers', {
+    method: 'POST',
+    body: {
+      name: '带密钥的 server',
+      transport: 'stdio',
+      command: 'node',
+      args: ['server.js', '--token=super-secret-token'],
+    },
+  })
+  assert.equal(created.status, 201, JSON.stringify(created.body))
+  const secretId = created.body.id
+
+  // 管理员自己能看到完整命令行（要能编辑）
+  const adminList = await asAdmin.json('/api/mcp/servers')
+  const adminItem = adminList.body.items.find((s) => s.id === secretId)
+  assert.ok(adminItem.args.join(' ').includes('super-secret-token'))
+
+  // 普通用户能看列表，但拿不到命令行参数——token 常写在 args 里
+  const asAlice = client(aliceCookie)
+  const aliceList = await asAlice.json('/api/mcp/servers')
+  assert.equal(aliceList.status, 200)
+  const aliceItem = aliceList.body.items.find((s) => s.id === secretId)
+  assert.ok(aliceItem, '普通用户仍应看到 server 存在')
+  assert.equal(aliceItem.args, undefined)
+  assert.equal(aliceItem.command, undefined)
+  assert.ok(!JSON.stringify(aliceList.body).includes('super-secret-token'))
+
+  await asAdmin.json(`/api/mcp/servers/${secretId}`, { method: 'DELETE' })
+})
+
+test('知识库网页入库：多用户模式拒绝内网地址', async () => {
+  const asAlice = client(aliceCookie)
+  const res = await asAlice.json('/api/documents', {
+    method: 'POST',
+    body: { url: 'http://127.0.0.1:9/internal-admin' },
+  })
+  assert.equal(res.status, 400, JSON.stringify(res.body))
+  assert.equal(res.body.code, 'unsafe_url')
+
+  const privateNet = await asAlice.json('/api/documents', {
+    method: 'POST',
+    body: { url: 'http://192.168.1.1/' },
+  })
+  assert.equal(privateNet.status, 400, JSON.stringify(privateNet.body))
+  assert.equal(privateNet.body.code, 'unsafe_url')
+})
+
 test('自定义服务商与模型覆盖只允许 admin', async () => {
   const asAlice = client(aliceCookie)
   const create = await asAlice.json('/api/providers/custom', {

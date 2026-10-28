@@ -104,3 +104,9 @@ export function requireAdmin(req, _res, next) {
 export function currentUserId(req) {
   return req.app?.locals?.multiUser ? req.user?.id || null : null
 }
+
+/** 是否管理员。单用户模式（本机自托管）视为管理员 */
+export function isAdmin(req) {
+  if (!req.app?.locals?.multiUser) return true
+  return req.user?.role === 'admin'
+}
