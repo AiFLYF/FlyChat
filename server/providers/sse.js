@@ -12,29 +12,42 @@ export async function consumeSSE(response, onData) {
   const decoder = new TextDecoder()
   let buffer = ''
 
+  const handleLine = (raw) => {
+    const line = raw.trimEnd()
+    // 只处理 data: 行；注释行（: ping）与 event: 行直接跳过
+    if (!line.startsWith('data:')) return
+    const payload = line.slice(5).trim()
+    if (!payload || payload === '[DONE]') return
+    let evt
+    try {
+      evt = JSON.parse(payload)
+    } catch {
+      // 无法解析的行（心跳、日志）忽略，但不能吞掉回调抛出的错误
+      return
+    }
+    onData(evt)
+  }
+
   try {
     for (;;) {
       const { done, value } = await reader.read()
-      if (done) break
+      if (done) {
+        // 收尾：把解码器里残留的多字节字符吐出来，否则末尾的中文可能被截断
+        buffer += decoder.decode()
+        break
+      }
       buffer += decoder.decode(value, { stream: true })
 
       let idx
       while ((idx = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, idx).trimEnd()
+        handleLine(buffer.slice(0, idx))
         buffer = buffer.slice(idx + 1)
-        // 只处理 data: 行；注释行（: ping）与 event: 行直接跳过
-        if (!line.startsWith('data:')) continue
-        const payload = line.slice(5).trim()
-        if (!payload || payload === '[DONE]') continue
-        let evt
-        try {
-          evt = JSON.parse(payload)
-        } catch {
-          // 无法解析的行（心跳、日志）忽略，但不能吞掉回调抛出的错误
-          continue
-        }
-        onData(evt)
       }
+    }
+    // 最后一行可能没有换行符：不补这一步，上游的收尾 token 会整段丢掉
+    if (buffer.trim()) {
+      handleLine(buffer)
+      buffer = ''
     }
   } finally {
     // 提前退出时释放连接，避免上游一直往一个没人读的流里写

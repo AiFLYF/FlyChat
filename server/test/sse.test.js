@@ -107,3 +107,30 @@ test('assertOk：错误信息里带可操作提示，而不是原始堆栈', asy
   assert.match(err.message, /上下文窗口/)
   assert.match(err.message, /Mock API 错误 \(400\)/)
 })
+
+test('consumeSSE：最后一行没有换行符也要解析（收尾 token 不能丢）', async () => {
+  const last = JSON.stringify({ choices: [{ delta: { content: '最后一段' } }] })
+  const res = responseFromChunks([`data: ${JSON.stringify({ n: 1 })}\n\n`, `data: ${last}`])
+  const events = []
+  await consumeSSE(res, (e) => events.push(e))
+  assert.equal(events.length, 2)
+  assert.equal(events[1].choices[0].delta.content, '最后一段')
+})
+
+test('consumeSSE：多字节字符被切在两个 chunk 之间也不乱码', async () => {
+  const payload = JSON.stringify({ text: '中文内容不能断' })
+  const bytes = new TextEncoder().encode(`data: ${payload}\n\n`)
+  // 在字符中间切开：找第一个中文字符的第二个字节位置
+  const cut = bytes.indexOf(0xe6) + 1
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes.slice(0, cut))
+      controller.enqueue(bytes.slice(cut))
+      controller.close()
+    },
+  })
+  const events = []
+  await consumeSSE(new Response(stream, { status: 200 }), (e) => events.push(e))
+  assert.equal(events.length, 1)
+  assert.equal(events[0].text, '中文内容不能断')
+})
