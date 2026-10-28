@@ -26,8 +26,14 @@ server/
     resilience.js     重试 / 熔断 / 并发信号量
     compact.js        摘要式上下文压缩（小模型总结 + 缓存 + 降级）
     task-model.js     子任务专用模型选择（标题 / 摘要 / 追问建议）
+    tasks.js          小任务执行（title / summary / suggest / rewrite）
+    preset.js         预设 → 请求参数（预设是默认值，显式字段覆盖）+ 解析 preset:<id>
+    auth.js           登录态解析与 requireUser / requireAdmin（自己读写 cookie，不引 cookie-parser）
+    side-usage.js     按次计费的旁路调用记账（图像 / 语音 / 搜索）
     ssrf.js           Base URL 安全校验（含 DNS 解析结果检查）
     sse-response.js   服务端 SSE 通道（含心跳）
+    html.js           HTML → 纯文本（结构性清理，不引 cheerio / readability）
+    og.js             分享页的 Open Graph / Twitter Card meta 注入
     atomic.js         原子写 + 损坏文件留档
     logger.js         结构化日志 + 敏感字段脱敏
     metrics.js        进程内计数器与延迟分位
@@ -42,6 +48,10 @@ server/
     sse.js            上游 SSE 解析 + 错误归一
     format.js         内部消息 → 各协议 content 的公共助手
   rag/               知识库：切块、向量化、检索、编排
+    index.js         入库编排（内容 sha256 去重、202 入队）与检索入口
+    chunk.js         按段落/标题边界切块，带章节标题与重叠
+    embeddings.js    向量化：复用已配置的 OpenAI 兼容 /embeddings，不自带模型
+    store.js         workspaces / documents / chunks 读写 + 混合打分 + MMR
     jobs.js          异步入库流水线（进度 / 并发 / 重试 / 重启复位）
   tools/             内置工具（function calling）
   agent/
@@ -54,18 +64,35 @@ server/
   search/
     index.js          搜索后端抽象（Tavily / Brave / Serper / SearXNG，自动降级）
     tavily.js         Tavily 实现
+  images/
+    index.js          图像生成代理（OpenAI 兼容形状）
   store/
     db.js             node:sqlite 初始化、迁移、事务、降级
-    conversations.js  会话与消息仓库
+    conversations.js  会话与消息仓库（消息树 parent_id / variants）
+    users.js          用户、登录会话、PAT（令牌只存哈希）
+    folders.js        文件夹与标签
+    shares.js         分享快照
+    presets.js        预设
     usage.js          用量记账与聚合
+    budget.js         日/月成本上限
+    summary.js        上下文摘要缓存
   routes/
     chat.js           /api/chat、/api/complete、/api/title
+    tasks.js          /api/tasks/:kind 小任务（标题 / 摘要 / 建议 / 改写）
     rag.js            知识库与文档
     openai-api.js     /v1 OpenAI 兼容网关
     providers.js      服务商 CRUD、连通性自检、上游模型清单
     models.js         模型目录
-    conversations.js  会话 CRUD、批量消息、导出
-    system.js         health / metrics / config / usage / search
+    conversations.js  会话 CRUD、批量消息、导出 / 导入
+    folders.js        文件夹与标签
+    presets.js        预设 CRUD 与复制
+    mcp.js            MCP 服务器管理与工具列表
+    share.js          分享快照（含公开读取）
+    auth.js           登录、创建管理员、PAT、改密
+    users.js          用户管理（管理员）
+    images.js         图像生成
+    audio.js          语音转文字 / 文字转语音
+    system.js         health / metrics / config / budget / usage / search
     extract.js        文档文本抽取
   test/               node:test 测试套件（自带假上游，不需要真 Key）
 ```
@@ -687,10 +714,13 @@ POST /api/chat { ..., "agent": true, "imageGeneration": true }
 
 ### 5.4 存储
 
-- `node:sqlite`（Node 22.5+ 内置，无需编译）。
-- 表：`conversations` / `messages` / `usage_events` / `meta`，WAL 模式。
-- 拿不到 SQLite 时：`/api/conversations` 返回 503 并说明原因，**聊天功能不受影响**。
-- 数据库文件默认 `server/data/flychat.db`（已在 `.gitignore` 中）。
+- `node:sqlite`（Node 22.5+ 内置，无需编译）：WAL 模式、`synchronous=NORMAL`、`busy_timeout=5000`、开外键。
+- 当前 `SCHEMA_VERSION = 10`，表：`meta` / `conversations` / `messages` / `folders` / `users` / `sessions` /
+  `usage_events` / `shares` / `budgets` / `presets` / `workspaces` / `documents` / `chunks` /
+  `mcp_servers` / `context_summaries`。
+- 迁移顺序必须是「先补列、再建索引」：索引引用的列还不存在时建索引会直接抛错（踩过这个坑）。
+- 拿不到 SQLite 时：依赖存储的接口返回 503 并说明原因，**聊天功能不受影响**。
+- 数据库文件默认 `server/data/flychat.db`（已在 `.gitignore` 中），可用 `FLYCHAT_DATA_DIR` 改位置。
 
 ## 6. 部署
 
@@ -744,21 +774,34 @@ docker compose up -d --build
 ## 7. 测试
 
 ```bash
-npm test                     # 233 项，自带假上游，不需要真 Key
-npm run smoke:api            # 对着运行中的服务做 13 项接口冒烟（默认 127.0.0.1:3001）
+npm test                     # 262 项，自带假上游，不需要真 Key
+npm run smoke:api            # 对着运行中的服务做 15 项接口冒烟（默认 127.0.0.1:3001）
 node scripts/smoke-api.mjs http://127.0.0.1:3011
+npm run smoke                # Playwright UI 冒烟：越界 / 顶栏高度 / 进出场动画 / 键盘可达 / reduced-motion
+npm run test:e2e             # 端到端套件（full / features2 / phase3-6）
+npx tsc -b --pretty false    # 前端类型检查（strict + noUnusedLocals/Parameters）
 ```
 
 - 单元/集成测试自带假上游（`test/helpers/mock-upstream.js`），**不需要真实 API Key，不产生费用**。
-- 覆盖：SSE 分片解析、重试策略、熔断、上下文裁剪、SSRF、鉴权、服务商 CRUD、会话 CRUD、
-  分享、语音、端到端流式、用量记账。
+- 覆盖：SSE 分片解析、重试与熔断、降级链、token 估算与上下文裁剪、摘要压缩、SSRF、鉴权与多用户、
+  PAT、消息树、服务商 CRUD、会话 CRUD、文件夹、分享与 OG、预设、知识库与检索打分、MCP、
+  图像、语音、小任务与任务模型、用量记账与预算、OpenAI 兼容网关、数据库迁移。
 - `smoke-api.mjs` 用于部署后验证：只检查「接口通、结构对、错误处理合理」，不发真实模型请求。
+- UI 冒烟与 E2E 通过 `scripts/lib/playwright.mjs` 解析 Playwright（不在 `dependencies` 里），
+  找不到自带浏览器时回退到系统 Chrome。
+- 仓库没有配 CI：`tsc` + `npm test` 是提交前的本地门禁，按改动范围跑，不相关的也要保持绿。
 - 加新适配器时，先在 `mock-upstream.js` 里补对应协议的假响应，再写端到端用例。
 
 ## 8. 已知限制
 
-- 单租户：没有多用户注册/登录体系。需要多租户请在前面加一层网关或自行扩展 `store/`。
-- 服务端会话存储是**可选增强**：前端默认仍以 IndexedDB 为主存储，接入方式见
-  `.multi-agent-collab/inbox/Q-2026-10-18-01.md` 的接口说明。
+- **前端仍以 IndexedDB 为主存储**，服务端 SQLite 是同步副本：跨设备一致性是「最后写入胜出」，
+  同步失败不会阻塞聊天、也不会自动重试。换设备或清浏览器数据前先用 `GET /api/export` 全量导出。
+- **预设是实例级共享资源**：`presets` 表没有 `user_id`，多用户模式下任何登录用户都能改/删他人的预设
+  （与会话、文件夹、分享、用量、知识库工作区的按用户隔离不一致）。预设指向他人知识库时检索层会拦住，不会泄漏内容。
+- **知识库检索是内存打分**：`rag/store.js` 把工作区的全部切块读出来算分（没有 ANN 索引），
+  切块上万后延迟会明显上升；按文档过滤时下推到了 SQL。
+- **限流是进程内存态**：单进程部署够用，重启清零，多副本之间不共享。
+- **图像生成只支持 OpenAI 兼容形状**，SD WebUI / ComfyUI 协议未接。
+- **分享页只注入 meta 标签**，没有做整页 SSR，也没有 `og:image` 缩略图。
 - 旧版 `.doc` 不支持（请另存为 `.docx` / PDF）。
 - `node:sqlite` 在 Node 22 仍标记 experimental，但 API 已稳定；升级 Node 时留意变更。
