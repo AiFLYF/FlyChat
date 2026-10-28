@@ -425,42 +425,62 @@ export default function Sidebar({ open }: { open: boolean }) {
       .then(async (res) => {
         if (cancelled || !res || !Array.isArray(res.items)) return
 
-        if (res.items.length > 0) {
-          const mapped: ConversationFolder[] = res.items.map((it) => ({
-            id: it.id,
-            name: it.name,
-            emoji: it.icon || '📁',
-            createdAt: Date.now(),
-          }))
-          setFolders(mapped)
+        const serverFolders: ConversationFolder[] = res.items.map((it) => ({
+          id: it.id,
+          name: it.name,
+          emoji: it.icon || '📁',
+          createdAt: Date.now(),
+        }))
+        const serverIds = new Set(serverFolders.map((f) => f.id))
+
+        /**
+         * 本地有、服务端没有的文件夹 = 还没迁移上去的（首次升级，或上次迁移中途失败）。
+         *
+         * 之前只要服务端非空就直接 setFolders(服务端列表)，把本地这批整个丢掉：
+         * 一次迁移里如果第 2 个 createFolderApi 失败，第 1 个已经落到服务端，
+         * 下次挂载就走「服务端非空」分支，失败的那个文件夹永远没机会再迁移。
+         * 现在统一成「按 id 差集补齐 + 合并」，两条路径都走同一套逻辑。
+         */
+        const pending = useChatStore.getState().folders.filter((f) => !serverIds.has(f.id))
+        if (pending.length === 0) {
+          setFolders(serverFolders)
           return
         }
 
-        /**
-         * 服务端一个文件夹都没有，但本地可能已经有了 —— 那批是「文件夹还只存本地」时建的。
-         * 这里如果直接 setFolders([])，它们会被清空，里面的会话全部挤进「未分类」，
-         * 用户看到的是「我分好的文件夹没了」。所以做一次性迁移：把本地的推上去，
-         * 并把本地 id 换成服务端 id（会话的 folderId 也要跟着换，否则指向不存在的 id）。
-         */
-        const local = useChatStore.getState().folders
-        if (local.length === 0) return
-
         const idMap = new Map<string, string>()
-        for (const f of local) {
+        const createdFolders: ConversationFolder[] = []
+        // 同名即视为「上次其实已经建成功，只是没拿到响应」：
+        // 直接复用服务端那条，否则每次挂载都会多建一个同名文件夹。
+        const byName = new Map(serverFolders.map((f) => [f.name.trim(), f]))
+        for (const f of pending) {
+          const same = byName.get(f.name.trim())
+          if (same) {
+            idMap.set(f.id, same.id)
+            continue
+          }
           try {
             const created = await createFolderApi({ name: f.name, icon: f.emoji })
-            if (created?.id) idMap.set(f.id, created.id)
+            if (created?.id) {
+              idMap.set(f.id, created.id)
+              createdFolders.push({ ...f, id: created.id })
+            }
           } catch {
             // 单个推失败就留在本地，下次挂载再试；不能因为失败把本地删掉
           }
         }
-        if (cancelled || idMap.size === 0) return
+        if (cancelled) return
+
+        // 服务端已有的 + 本次新建的 + 仍然推不上去的本地项，一个都不能少
+        const merged: ConversationFolder[] = [
+          ...serverFolders,
+          ...createdFolders,
+          ...pending.filter((f) => !idMap.has(f.id)),
+        ]
+        setFolders(merged)
+
+        if (idMap.size === 0) return
 
         useChatStore.setState((s) => ({
-          folders: s.folders.map((f) => {
-            const next = idMap.get(f.id)
-            return next ? { ...f, id: next } : f
-          }),
           conversations: s.conversations.map((c) => {
             const next = c.folderId ? idMap.get(c.folderId) : undefined
             return next ? { ...c, folderId: next } : c
