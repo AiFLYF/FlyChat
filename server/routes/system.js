@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { config, configWarnings } from '../config.js'
-import { badRequest } from '../lib/errors.js'
+import { badRequest, unavailable } from '../lib/errors.js'
 import { metricsSnapshot } from '../lib/metrics.js'
 import { breakerSnapshot } from '../lib/resilience.js'
 import { storageStatus } from '../store/db.js'
