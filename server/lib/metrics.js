@@ -7,10 +7,20 @@
 const counters = new Map()
 const timings = new Map()
 const MAX_SAMPLES = 500
+/** label 基数上限：避免攻击者用随机路径把进程内存撑爆 */
+const MAX_KEYS = 200
+
+function setBounded(map, key, value) {
+  if (!map.has(key) && map.size >= MAX_KEYS) {
+    const oldest = map.keys().next().value
+    if (oldest !== undefined) map.delete(oldest)
+  }
+  map.set(key, value)
+}
 
 export function inc(name, labels = {}, value = 1) {
   const key = labelKey(name, labels)
-  counters.set(key, (counters.get(key) || 0) + value)
+  setBounded(counters, key, (counters.get(key) || 0) + value)
 }
 
 export function observe(name, ms, labels = {}) {
@@ -18,7 +28,7 @@ export function observe(name, ms, labels = {}) {
   const list = timings.get(key) || []
   list.push(Math.max(0, Number(ms) || 0))
   if (list.length > MAX_SAMPLES) list.shift()
-  timings.set(key, list)
+  setBounded(timings, key, list)
 }
 
 function labelKey(name, labels) {

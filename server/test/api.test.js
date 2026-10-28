@@ -372,6 +372,13 @@ test('全量导出 → 导入（merge / replace）', async () => {
   await api('/api/conversations/conv-export-1', { method: 'DELETE' })
 })
 
+test('metrics：公开分享 id 不能出现在指标 label 里', async () => {
+  const shareId = 'super-secret-share-id'
+  await api(`/api/share/${shareId}`)
+  const metrics = await (await api('/api/metrics')).json()
+  assert.ok(!JSON.stringify(metrics).includes(shareId), '分享 id 是公开访问凭证，不能泄露')
+})
+
 test('CORS：默认拒绝任意公网来源，同源与本机来源放行', async () => {
   const evil = await api('/api/health', {
     headers: { Origin: 'https://evil.example' },

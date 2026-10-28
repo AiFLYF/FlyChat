@@ -36,6 +36,14 @@ const PUBLIC_SHARE = /^\/api\/share\/[A-Za-z0-9_-]+$/
 /** 登录相关端点本身不能要求登录，否则永远进不去 */
 const AUTH_PUBLIC = new Set(['/api/auth/me', '/api/auth/setup', '/api/auth/login', '/api/auth/logout'])
 
+/** 指标 label 不能带真实 id：分享 id 是公开访问凭证，不能从 metrics 泄露 */
+function metricRoute(path) {
+  return path.replace(
+    /^(\/api\/(?:share|documents|conversations|workspaces|presets|folders|mcp\/servers))\/[^/]+/,
+    '$1/:id'
+  )
+}
+
 /** 定长比较，避免通过响应时间猜令牌 */
 function safeEqual(a, b) {
   const bufA = Buffer.from(String(a))
@@ -89,10 +97,10 @@ export function createApp() {
 
     res.on('finish', () => {
       const ms = Number(process.hrtime.bigint() - startedAt) / 1e6
-      observe('http_request_ms', ms, { route: req.path })
-      inc('http_requests_total', { status: String(res.statusCode) })
-      // 静态资源不记日志，避免刷屏
+      // 静态资源不记日志/指标，避免刷屏和无意义基数
       if (!req.path.startsWith('/api/')) return
+      observe('http_request_ms', ms, { route: metricRoute(req.path) })
+      inc('http_requests_total', { status: String(res.statusCode) })
       const level = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info'
       log[level](`${req.method} ${req.path} ${res.statusCode}`, { ms: Math.round(ms) })
     })
