@@ -186,7 +186,7 @@ function ConversationItem({
       onClick={() => setActive(conv.id)}
       role="listitem"
       tabIndex={0}
-      aria-current={active ? 'true' : undefined}
+      aria-current={active ? 'page' : undefined}
       aria-label={conv.title}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
@@ -394,6 +394,11 @@ export default function Sidebar({ open }: { open: boolean }) {
   useDismiss(userMenuRef, () => setUserMenuOpen(false), userMenuOpen)
 
   const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 150)
+    return () => clearTimeout(timer)
+  }, [query])
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [deleted, setDeleted] = useState<Conversation | null>(null)
   const dragId = useRef<string | null>(null)
@@ -539,7 +544,7 @@ export default function Sidebar({ open }: { open: boolean }) {
   }, [conversations, serverTags])
 
   // 过滤后的会话（搜索 + 标签筛选）
-  const q = query.trim().toLowerCase()
+  const q = debouncedQuery.trim().toLowerCase()
   const filtered = useMemo(() => {
     return conversations.filter((c) => {
       if (selectedTag && !c.tags?.includes(selectedTag)) return false
@@ -638,10 +643,9 @@ export default function Sidebar({ open }: { open: boolean }) {
   }
 
   const handleDeleteFolder = (folder: ConversationFolder) => {
-    if (confirm(`确定删除文件夹「${folder.name}」吗？里面的对话会移到未分类，不会被删除。`)) {
-      deleteFolder(folder.id)
-      void deleteFolderApi(folder.id).catch(() => {})
-    }
+    deleteFolder(folder.id)
+    void deleteFolderApi(folder.id).catch(() => {})
+    showToast(`已删除文件夹「${folder.name}」，会话已移至未分类`, 'info')
   }
 
   const handleMoveConversation = async (convId: string, folderId: string | null) => {
@@ -696,7 +700,11 @@ export default function Sidebar({ open }: { open: boolean }) {
 
         {/* 标签快捷筛选栏 */}
         {tagCounts.length > 0 && (
-          <div className="flex items-center gap-1 overflow-x-auto py-0.5 scrollbar-none text-[11px]">
+          <div
+            role="group"
+            aria-label="按会话标签筛选"
+            className="flex items-center gap-1 overflow-x-auto py-0.5 scrollbar-none text-[11px]"
+          >
             <button
               onClick={() => setSelectedTag(null)}
               className={`rounded-full px-2 py-0.5 whitespace-nowrap transition-colors ${
@@ -901,7 +909,8 @@ export default function Sidebar({ open }: { open: boolean }) {
                   ) : (
                     <span className="truncate">{folder.name}</span>
                   )}
-                  <span className="rounded bg-hover px-1.5 py-0.2 text-[10px] text-ink-4">
+                  {/* 计数是信息而不是装饰，必须用 ink-3：ink-4 在 sidebar 底上只有 2.6:1 */}
+                  <span className="rounded bg-hover px-1.5 py-0.2 text-[10px] text-ink-3">
                     {folderConvs.length}
                   </span>
                 </button>
@@ -931,7 +940,7 @@ export default function Sidebar({ open }: { open: boolean }) {
               {isExpanded && (
                 <div className="ml-2.5 border-l border-rule/50 pl-1.5 pt-0.5 space-y-0.5">
                   {folderConvs.length === 0 ? (
-                    <div className="px-2 py-1.5 text-[11px] text-ink-4">空文件夹（可拖入会话）</div>
+                    <div className="px-2 py-1.5 text-[11px] text-ink-3">空文件夹（可拖入会话）</div>
                   ) : (
                     folderConvs.map((conv, ci) => (
                       <ConversationItem
@@ -1036,7 +1045,7 @@ export default function Sidebar({ open }: { open: boolean }) {
             <Command size={15} className="text-ink-3 group-hover:text-ink-1" />
             <span>快捷指令</span>
           </div>
-          <kbd className="rounded border border-rule px-1 py-0.5 text-[10px] font-mono text-ink-4">
+          <kbd className="rounded border border-rule px-1 py-0.5 text-[10px] font-mono text-ink-3">
             ⌘K
           </kbd>
         </button>
