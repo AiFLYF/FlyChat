@@ -340,7 +340,7 @@ flyweb/
 ```bash
 npx tsc -b --pretty false   # 类型检查（strict，开了 noUnusedLocals/Parameters）
 npm run build               # 构建前端
-npm test                    # 后端 262 项测试，自带假上游，不需要真 Key、不产生费用
+npm test                    # 后端 264 项测试，自带假上游，不需要真 Key、不产生费用
 npm run smoke:api           # 对运行中的服务做接口冒烟（默认 127.0.0.1:3001）
 npm run smoke               # Playwright UI 冒烟：越界 / 顶栏高度 / 动画 / 键盘可达 / reduced-motion
 npm run test:e2e            # 端到端套件（需要本机 Chrome）

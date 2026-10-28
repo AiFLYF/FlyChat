@@ -779,7 +779,7 @@ docker compose up -d --build
 ## 7. 测试
 
 ```bash
-npm test                     # 262 项，自带假上游，不需要真 Key
+npm test                     # 264 项，自带假上游，不需要真 Key
 npm run smoke:api            # 对着运行中的服务做 15 项接口冒烟（默认 127.0.0.1:3001）
 node scripts/smoke-api.mjs http://127.0.0.1:3011
 npm run smoke                # Playwright UI 冒烟：越界 / 顶栏高度 / 进出场动画 / 键盘可达 / reduced-motion
