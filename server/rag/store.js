@@ -1,7 +1,10 @@
 import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 import { getDb, transaction } from '../store/db.js'
 import { badRequest, notFound } from '../lib/errors.js'
 import { bufferToVector, vectorToBuffer, cosine } from './embeddings.js'
+import { config } from '../config.js'
 
 /**
  * 知识库存储。
@@ -105,12 +108,34 @@ export function deleteWorkspace(id, { userId = null } = {}) {
   }
   if (!workspaceRow(id, userId)) return false
   const db = getDb()
-  return transaction((tx) => {
+  // 源文件不在数据库里，行删掉之后就再也找不到它们了——
+  // 先记下 id，事务提交后再删文件，否则反复建/删工作区会把 uploads 目录撑爆。
+  const docIds = db
+    .prepare('SELECT id FROM documents WHERE workspace_id = ?')
+    .all(id)
+    .map((r) => r.id)
+  const ok = transaction((tx) => {
     tx.prepare('DELETE FROM chunks WHERE workspace_id = ?').run(id)
     tx.prepare('DELETE FROM documents WHERE workspace_id = ?').run(id)
     const r = tx.prepare('DELETE FROM workspaces WHERE id = ?').run(id)
     return (r?.changes ?? 0) > 0
   })
+  if (ok) removeUploadFiles(docIds)
+  return ok
+}
+
+/** 删除 uploads 下的源文件；id 必须先过格式校验，避免拼出目录穿越路径 */
+function removeUploadFiles(docIds) {
+  const base = path.resolve(config.storage.dataDir, 'uploads')
+  for (const docId of docIds) {
+    const id = String(docId || '')
+    if (!/^doc-[a-f0-9]{16}$/.test(id)) continue
+    try {
+      fs.unlinkSync(path.join(base, id))
+    } catch {
+      /* 文件可能本来就不存在（纯文本入库、已清理过） */
+    }
+  }
 }
 
 function ensureWorkspace(id, userId = null) {

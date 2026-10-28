@@ -355,3 +355,27 @@ test('文档删除：编码后的路径穿越 id 必须被拒绝', async () => {
   assert.equal(res.status, 400)
   assert.equal((await res.json()).code, 'invalid_document_id')
 })
+
+test('删除知识库工作区：源文件也要一起清理', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const { config } = await import('../config.js')
+
+  const ws = await (await post('/api/workspaces', { name: '临时库' })).json()
+  const content = Buffer.from('这个文件在工作区删除后不应残留').toString('base64')
+  const created = await post('/api/documents', {
+    workspaceId: ws.id,
+    name: '临时.txt',
+    mime: 'text/plain',
+    dataUrl: `data:text/plain;base64,${content}`,
+  })
+  const doc = await created.json()
+  assert.equal(created.status, 202, JSON.stringify(doc))
+
+  const file = path.join(config.storage.dataDir, 'uploads', doc.id)
+  assert.ok(fs.existsSync(file), '上传时应落盘')
+
+  const del = await fetch(`${server.url}/api/workspaces/${ws.id}`, { method: 'DELETE' })
+  assert.equal(del.status, 200)
+  assert.ok(!fs.existsSync(file), '工作区删除后源文件必须一起删掉，否则会一直占磁盘')
+})
