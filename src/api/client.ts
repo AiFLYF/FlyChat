@@ -402,11 +402,25 @@ export async function fetchServerUsage(): Promise<ServerUsageSummary | null> {
 
 export async function syncConversationToServer(conv: Conversation): Promise<boolean> {
   try {
+    // 剥离附件大体积 base64 与缩略图，避免同步几 MB 冗余数据占用网络
+    const sanitized: Conversation = {
+      ...conv,
+      messages: conv.messages.map((m) => {
+        if (!m.attachments || m.attachments.length === 0) return m
+        return {
+          ...m,
+          attachments: m.attachments.map((a) => {
+            const { dataUrl: _d, thumbnail: _t, ...rest } = a
+            return rest
+          }),
+        }
+      }),
+    }
     const res = await fetch('/api/conversations', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(conv),
+      body: JSON.stringify(sanitized),
     })
     return res.ok
   } catch {
