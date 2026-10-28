@@ -242,7 +242,7 @@ npm run dev                        # 终端 2：前后端
 | 文件夹与标签 | `GET/POST /api/folders`、`POST /api/folders/:id/move`、`GET /api/tags` |
 | 知识库 | `GET/POST /api/workspaces`、`GET/POST /api/documents`、`GET /api/documents/:id`、`POST /api/documents/:id/retry`、`POST /api/retrieve` |
 | Agent 与 MCP | `GET/POST /api/mcp/servers`、`POST /api/mcp/servers/:id/probe`、`GET /api/mcp/tools` |
-| 多用户 | `POST /api/auth/setup|login|logout`、`GET /api/auth/me`、`POST/DELETE /api/auth/token`、`GET/POST /api/users` |
+| 多用户 | `POST /api/auth/setup`、`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/auth/me`、`POST/DELETE /api/auth/token`、`GET/POST /api/users` |
 | 预设 | `GET/POST /api/presets`、`PUT/DELETE /api/presets/:id`、`POST /api/presets/:id/duplicate` |
 | 分享 | `POST /api/share`、`GET /api/share/:id`（公开）、`GET /api/shares`、`DELETE /api/share/:id` |
 | 成本 | `GET/PUT /api/budget`、`GET /api/usage`、`GET /api/usage/recent` |
