@@ -4,26 +4,15 @@
  * 场景：用户升级前文件夹只存本地（IndexedDB）。新版挂载时若直接 setFolders([])，
  * 这些文件夹会被清空、会话全掉进「未分类」。期望：自动推送到服务端，并把本地 id 换成服务端 id。
  */
-import { createRequire } from 'node:module'
+import { chromium, launchOptions } from './lib/playwright.mjs'
 
-const requireLocal = createRequire(import.meta.url)
-let chromium
-try {
-  ;({ chromium } = requireLocal('playwright'))
-} catch {
-  // 本机通常只装了 playwright-core（托管 workspace 里），必须显式指定系统 Chrome
-  const requireFallback = createRequire(
-    (process.env.PLAYWRIGHT_REQUIRE || 'C:/Users/FLYF/.workbuddy-ai/binaries/node/workspace/') + '/'
-  )
-  ;({ chromium } = requireFallback('playwright-core'))
-}
-
-const CHROME =
-  process.env.CHROME_PATH ||
-  'C:/Program Files/Google/Chrome/Application/chrome.exe'
 const BASE = process.env.BASE_URL || process.argv[2] || 'http://127.0.0.1:5180'
 
-const browser = await chromium.launch({ executablePath: CHROME })
+// Chrome 路径交给 playwright 自己找（CHROME_PATH 可覆盖），不再写死本机安装位置
+const browser = await chromium.launch({
+  ...launchOptions,
+  ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}),
+})
 const page = await browser.newPage()
 const errors = []
 page.on('console', (m) => {

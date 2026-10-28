@@ -8,12 +8,10 @@
  *  6. prefers-reduced-motion 降级
  *  7. 超长文本 / 超长 URL 不撑破布局
  */
-import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const require = createRequire('C:/Users/FLYF/.workbuddy-ai/binaries/node/workspace/')
-const { chromium } = require('playwright-core')
+import { chromium } from '../lib/playwright.mjs'
 
 const BASE = process.env.BASE || 'http://127.0.0.1:5180'
 // 每次运行写独立子目录：不删旧文件（沙箱的 safe-delete 钩子会拦批量删除并直接失败）

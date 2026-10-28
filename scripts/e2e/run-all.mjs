@@ -9,11 +9,11 @@
  *   node scripts/e2e/run-all.mjs                 # 跑全部
  *   node scripts/e2e/run-all.mjs full features2  # 只跑指定套件
  */
-import { spawn } from 'node:child_process'
-import { createRequire } from 'node:module'
+import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { chromium } from '../lib/playwright.mjs'
 
 const ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const NODE = process.execPath
@@ -73,10 +73,42 @@ async function waitFor(url, label, timeoutMs = 30000) {
  * 表现成「服务明明起来了却 net::ERR_CONNECTION_REFUSED / Timeout」。
  * 在这里先用无头浏览器把这一趟走完，套件就都跑在热缓存上。
  */
+/**
+ * 注册「闪测模型」服务商（指向本机 mock）。
+ *
+ * 之前这一步靠人工在界面上点，或者依赖 server/data/flychat.db 里早就存好的那条记录：
+ * 换台机器 / 用 FLYCHAT_DATA_DIR 起一套干净数据库，模型列表里就没有 mock-flash，
+ * full 套件第一步「切模型」直接超时，后面 9 条用例连锁失败（表现为「没有代码块」「悬停不到消息」）。
+ * 编排脚本自己把它补齐，套件才是自包含的。
+ */
+async function ensureMockProvider() {
+  const list = await fetch(API + '/api/providers')
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null)
+  const providers = list?.providers || []
+  if (providers.some((p) => Array.isArray(p.models) && p.models.includes('mock-flash'))) return
+
+  const res = await fetch(API + '/api/providers/custom', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: '闪测模型',
+      type: 'openai-compat',
+      // openai-compat 会在 baseUrl 后面拼 /chat/completions，所以必须带 /v1
+      baseUrl: MOCK + '/v1',
+      apiKey: 'sk-mock',
+      models: ['mock-flash'],
+    }),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`注册闪测服务商失败：HTTP ${res.status} ${detail.slice(0, 200)}`)
+  }
+  console.log('  已注册闪测服务商（mock-flash）')
+}
+
 async function warmUp() {
   if (process.env.SKIP_WARMUP === '1') return
-  const req = createRequire('C:/Users/FLYF/.workbuddy-ai/binaries/node/workspace/')
-  const { chromium } = req('playwright-core')
   const browser = await chromium.launch({
     channel: 'chrome',
     headless: true,
@@ -102,13 +134,17 @@ async function warmUp() {
 
 function stopAll() {
   for (const { name, child } of procs) {
-    if (!child.killed) {
-      try {
-        // Windows 下直接 kill 子进程即可（不是 shell 包装，pid 就是 node）
+    if (child.killed || child.exitCode !== null) continue
+    try {
+      if (process.platform === 'win32') {
+        // 必须连子进程树一起杀：Vite 会拉起 esbuild，只杀 node 会留下占端口的孤儿进程，
+        // 下次启动就 EADDRINUSE（这次排查端到端脚本时被坑过）
+        spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+      } else {
         child.kill('SIGTERM')
-      } catch {
-        /* 已退出 */
       }
+    } catch {
+      /* 已退出 */
     }
   }
 }
@@ -141,6 +177,15 @@ process.on('SIGTERM', () => {
   cleanup()
   process.exit(143)
 })
+// 脚本本身抛错时也必须收尾：之前一个未捕获异常会把三个服务全留在后台，
+// 下次运行直接 EADDRINUSE，而且占端口的还是旧代码。
+const fatal = (err) => {
+  console.error('运行中断：' + (err?.stack || err?.message || err))
+  cleanup()
+  process.exit(1)
+}
+process.on('uncaughtException', fatal)
+process.on('unhandledRejection', fatal)
 
 console.log('\n=== 准备环境 ===')
 try {
@@ -159,11 +204,14 @@ try {
   if (!alive[2]) start('mock', ['scripts/mock-flash.mjs'], 'run-mock.log')
   else console.log('  闪测模型已在运行，复用')
 
-  await waitFor(API + '/api/health', '后端')
+  // 60s：机器忙的时候（比如同时跑构建）后端冷启动实测能到 30s 边缘，
+  // 卡在 30s 会表现成「服务其实起来了但编排先失败」。
+  await waitFor(API + '/api/health', '后端', 60000)
   // Vite 冷启动要做依赖预构建，实测能到 25s+，给足 120s 别卡在临界点上
   await waitFor(BASE + '/', '前端', 120000)
   await waitFor(MOCK + '/v1/models', '闪测模型')
   console.log('  三个服务就绪')
+  await ensureMockProvider()
   if (!execScript && !wanted.length) {
     console.log('  提示：phase6（多用户）需独立环境，默认不跑——')
     console.log('        WEB_PORT=5181 PORT=4101 MULTI_USER=true FLYCHAT_DATA_DIR=.shots/mu-data \\')

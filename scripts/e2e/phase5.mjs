@@ -4,12 +4,10 @@
  * 知识库是前几轮唯一没测通的核心功能（只测过「空库不弹提示」）。
  * 这里走完整链路：上传文档 → 流水线处理就绪 → 提问 → 检索命中 → 引用块渲染 → 展开看片段。
  */
-import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const require = createRequire('C:/Users/FLYF/.workbuddy-ai/binaries/node/workspace/')
-const { chromium } = require('playwright-core')
+import { chromium } from '../lib/playwright.mjs'
 
 const BASE = process.env.BASE || 'http://127.0.0.1:5180'
 const RUN = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)

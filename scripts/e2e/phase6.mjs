@@ -9,12 +9,10 @@
  *     node scripts/e2e/run-all.mjs phase6
  * （run-all 会把 env 透传给前后端，vite 代理也跟着 PORT 走）
  */
-import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const require = createRequire('C:/Users/FLYF/.workbuddy-ai/binaries/node/workspace/')
-const { chromium } = require('playwright-core')
+import { chromium } from '../lib/playwright.mjs'
 
 const BASE = process.env.BASE || `http://127.0.0.1:${process.env.WEB_PORT || '5180'}`
 const RUN = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)

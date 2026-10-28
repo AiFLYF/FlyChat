@@ -10,12 +10,10 @@
  * 经验：这类多弹层流程最怕「上一步留下遮罩」，后面全部超时。
  * 所以每步开头统一 reset（连按两次 Esc + 点空白处），让步骤彼此独立。
  */
-import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const require = createRequire('C:/Users/FLYF/.workbuddy-ai/binaries/node/workspace/')
-const { chromium } = require('playwright-core')
+import { chromium } from '../lib/playwright.mjs'
 
 const BASE = process.env.BASE || 'http://127.0.0.1:5180'
 // 每次运行写独立子目录：不删旧文件（沙箱的 safe-delete 钩子会拦批量删除并直接失败）
