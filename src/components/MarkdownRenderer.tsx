@@ -124,8 +124,8 @@ const CodeBlock = memo(function CodeBlock({
   return (
     <div className="group/code my-4 overflow-hidden rounded-xl bg-panel shadow-1 border border-rule/70 transition-shadow duration-200 ease-out hover:shadow-2">
       {/* 工具栏 */}
-      <div className="flex items-center justify-between bg-hover-soft px-3 py-1.5 border-b border-rule/50">
-        <div className="flex items-center gap-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-1.5 bg-hover-soft px-3 py-1.5 border-b border-rule/50">
+        <div className="flex min-w-0 items-center gap-2.5">
           {/* macOS 终端三色控制点 */}
           <div className="flex items-center gap-1.5 select-none" aria-hidden="true">
             <span className="h-2.5 w-2.5 rounded-full bg-rose-500/80 inline-block" />
@@ -136,7 +136,9 @@ const CodeBlock = memo(function CodeBlock({
             {language || 'text'}
           </span>
           {isPreviewable && (
-            <div className="flex items-center rounded-lg bg-canvas p-0.5 border border-rule/60 text-[11px]">
+            // shrink-0 + whitespace-nowrap：分屏打开后聊天区被压窄，
+            // 这组按钮会被压成「代/码」「预/览」逐字竖排（中文可在任意字符间断行）
+            <div className="flex shrink-0 items-center whitespace-nowrap rounded-lg bg-canvas p-0.5 border border-rule/60 text-[11px]">
               <button
                 type="button"
                 onClick={() => setViewMode('code')}
@@ -185,7 +187,7 @@ const CodeBlock = memo(function CodeBlock({
           )}
         </div>
 
-        <div className="flex items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-0.5 whitespace-nowrap">
           {collapsible && viewMode === 'code' && (
             <button
               onClick={() => setExpanded((v) => !v)}
@@ -221,19 +223,16 @@ const CodeBlock = memo(function CodeBlock({
 
       {viewMode === 'preview' && isPreviewable ? (
         <div className="p-4 bg-canvas/40 flex justify-center min-h-[140px] max-h-[500px] overflow-auto">
-          {language === 'svg' || code.trim().startsWith('<svg') ? (
-            <div
-              className="flex justify-center max-w-full [&_svg]:max-w-full [&_svg]:h-auto"
-              dangerouslySetInnerHTML={{ __html: code }}
-            />
-          ) : (
-            <iframe
-              title="Artifact Preview"
-              srcDoc={code}
-              sandbox="allow-scripts allow-modals"
-              className="w-full h-80 rounded-lg border border-rule/80 bg-white"
-            />
-          )}
+          <iframe
+            title="Code Preview"
+            srcDoc={
+              language === 'svg' || code.trim().startsWith('<svg')
+                ? `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:transparent;overflow:auto;}svg{max-width:100%;height:auto;}</style></head><body>${code}</body></html>`
+                : code
+            }
+            sandbox="allow-scripts"
+            className="w-full h-80 rounded-lg border border-rule/80 bg-white"
+          />
         </div>
       ) : (
         <>
@@ -254,63 +253,72 @@ const CodeBlock = memo(function CodeBlock({
   )
 })
 
+/** 插件数组同样提到模块级：内联数组每次渲染都是新引用，会让 react-markdown 重跑一遍解析 */
+const REMARK_PLUGINS = [remarkGfm, remarkMath]
+const REHYPE_PLUGINS = [rehypeKatex, rehypeHighlight]
+
+/**
+ * Markdown 元素渲染表。
+ *
+ * 必须放在模块级：写成内联对象 + 内联箭头函数时，父组件每次重渲染都会产生新的组件类型，
+ * React 会把这棵子树整个卸载重建 —— 代码块里已经切到「预览」的状态因此被重置回「代码」。
+ * 实测回答结束后追问建议异步插入（触发一次 store 更新）时必现，用户看到预览自己跳回去。
+ */
+const MARKDOWN_COMPONENTS = {
+  pre: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+  code: ((props: { className?: string; children?: React.ReactNode }) => {
+    const { className, children } = props
+    const match = /language-(\w+)/.exec(className || '')
+    const raw = extractText(children)
+    const isBlock = !!match || raw.includes('\n')
+    if (!isBlock) {
+      return (
+        <code className="rounded bg-accent-soft px-1.5 py-0.5 text-[0.88em] text-ink-1">
+          {children}
+        </code>
+      )
+    }
+    return (
+      <CodeBlock language={match?.[1]} code={raw.replace(/\n$/, '')} className={className}>
+        {children}
+      </CodeBlock>
+    )
+  }) as never,
+  a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  ),
+  table: ({ children }: { children?: React.ReactNode }) => (
+    <div className="my-4 overflow-x-auto rounded-xl border border-rule/80 bg-panel/40 shadow-xs">
+      <table className="w-full border-collapse text-sm">{children}</table>
+    </div>
+  ),
+  thead: ({ children }: { children?: React.ReactNode }) => (
+    <thead className="bg-hover-soft/80 border-b border-rule">{children}</thead>
+  ),
+  th: ({ children }: { children?: React.ReactNode }) => (
+    <th className="px-3.5 py-2.5 text-left text-[12px] font-semibold text-ink-1 uppercase tracking-wider">
+      {children}
+    </th>
+  ),
+  tr: ({ children }: { children?: React.ReactNode }) => (
+    <tr className="border-b border-rule/40 hover:bg-hover/60 transition-colors duration-150 last:border-b-0">
+      {children}
+    </tr>
+  ),
+  td: ({ children }: { children?: React.ReactNode }) => (
+    <td className="px-3.5 py-2.5 text-[13px] text-ink-2">{children}</td>
+  ),
+}
+
 export default function MarkdownRenderer({ content }: { content: string }) {
   return (
     <div className="markdown-body break-words">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex, rehypeHighlight]}
-        components={{
-          pre: ({ children }) => <>{children}</>,
-          code: ((props: { className?: string; children?: React.ReactNode }) => {
-            const { className, children } = props
-            const match = /language-(\w+)/.exec(className || '')
-            const raw = extractText(children)
-            const isBlock = !!match || raw.includes('\n')
-            if (!isBlock) {
-              return (
-                <code className="rounded bg-accent-soft px-1.5 py-0.5 text-[0.88em] text-ink-1">
-                  {children}
-                </code>
-              )
-            }
-            return (
-              <CodeBlock language={match?.[1]} code={raw.replace(/\n$/, '')} className={className}>
-                {children}
-              </CodeBlock>
-            )
-          }) as never,
-          a: ({ children, href }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer">
-              {children}
-            </a>
-          ),
-          table: ({ children }) => (
-            <div className="my-4 overflow-x-auto rounded-xl border border-rule/80 bg-panel/40 shadow-xs">
-              <table className="w-full border-collapse text-sm">{children}</table>
-            </div>
-          ),
-          thead: ({ children }) => (
-            <thead className="bg-hover-soft/80 border-b border-rule">
-              {children}
-            </thead>
-          ),
-          th: ({ children }) => (
-            <th className="px-3.5 py-2.5 text-left text-[12px] font-semibold text-ink-1 uppercase tracking-wider">
-              {children}
-            </th>
-          ),
-          tr: ({ children }) => (
-            <tr className="border-b border-rule/40 hover:bg-hover/60 transition-colors duration-150 last:border-b-0">
-              {children}
-            </tr>
-          ),
-          td: ({ children }) => (
-            <td className="px-3.5 py-2.5 text-[13px] text-ink-2">
-              {children}
-            </td>
-          ),
-        }}
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
+        components={MARKDOWN_COMPONENTS as never}
       >
         {content}
       </ReactMarkdown>
