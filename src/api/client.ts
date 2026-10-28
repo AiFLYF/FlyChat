@@ -454,12 +454,13 @@ export async function fetchShareSnapshot(
   shareId: string,
   password?: string
 ): Promise<SharedConversationData> {
-  const query = password ? `?password=${encodeURIComponent(password)}` : ''
+  // 密码只走请求头，不放 URL query：
+  // query 会进浏览器历史、Referer、代理日志和访问日志，等于把分享密码写在明处。
   const headers: Record<string, string> = {}
   if (password) {
     headers['x-share-password'] = password
   }
-  const res = await fetch(`/api/share/${encodeURIComponent(shareId)}${query}`, {
+  const res = await fetch(`/api/share/${encodeURIComponent(shareId)}`, {
     credentials: 'include',
     headers,
   })
