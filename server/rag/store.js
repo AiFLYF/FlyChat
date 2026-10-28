@@ -14,58 +14,96 @@ import { bufferToVector, vectorToBuffer, cosine } from './embeddings.js'
 
 export const DEFAULT_WORKSPACE_ID = 'default'
 
+/** 每个用户有自己的默认知识库；单用户模式仍使用 'default' */
+export function defaultWorkspaceId(userId = null) {
+  return userId ? `${DEFAULT_WORKSPACE_ID}-${String(userId)}` : DEFAULT_WORKSPACE_ID
+}
+
 function now() {
   return Date.now()
 }
 
-export function ensureDefaultWorkspace() {
+function workspaceRow(id, userId = null) {
   const db = getDb()
-  const row = db.prepare('SELECT id FROM workspaces WHERE id = ?').get(DEFAULT_WORKSPACE_ID)
+  if (userId) {
+    return db
+      .prepare('SELECT * FROM workspaces WHERE id = ? AND user_id = ?')
+      .get(String(id), String(userId))
+  }
+  return db.prepare('SELECT * FROM workspaces WHERE id = ?').get(String(id))
+}
+
+export function ensureDefaultWorkspace(userId = null) {
+  const id = defaultWorkspaceId(userId)
+  const db = getDb()
+  const row = db.prepare('SELECT id FROM workspaces WHERE id = ?').get(id)
   if (!row) {
     const t = now()
-    db.prepare('INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)').run(
-      DEFAULT_WORKSPACE_ID,
-      '默认知识库',
-      t,
-      t
-    )
+    db.prepare(
+      'INSERT OR IGNORE INTO workspaces (id, name, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(id, '默认知识库', userId ? String(userId) : null, t, t)
   }
 }
 
-export function listWorkspaces() {
-  ensureDefaultWorkspace()
-  const db = getDb()
-  return db
-    .prepare(
-      `SELECT w.*,
-              (SELECT COUNT(*) FROM documents d WHERE d.workspace_id = w.id) AS doc_count,
-              (SELECT COUNT(*) FROM chunks c WHERE c.workspace_id = w.id) AS chunk_count
-       FROM workspaces w ORDER BY w.created_at ASC`
-    )
-    .all()
-    .map((r) => ({
-      id: r.id,
-      name: r.name,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-      docCount: r.doc_count,
-      chunkCount: r.chunk_count,
-    }))
+/**
+ * 多用户首次初始化时，把单用户时代没有归属的知识库认领给第一个管理员。
+ * 只改 workspaces.user_id；documents/chunks 通过 workspace_id 关联，无需搬迁。
+ */
+export function claimOwnerlessWorkspaces(userId) {
+  if (!userId) return 0
+  return getDb()
+    .prepare('UPDATE workspaces SET user_id = ?, updated_at = ? WHERE user_id IS NULL')
+    .run(String(userId), now()).changes
 }
 
-export function createWorkspace(name) {
+export function listWorkspaces({ userId = null } = {}) {
+  ensureDefaultWorkspace(userId)
+  const db = getDb()
+  const rows = userId
+    ? db
+        .prepare(
+          `SELECT w.*,
+                  (SELECT COUNT(*) FROM documents d WHERE d.workspace_id = w.id) AS doc_count,
+                  (SELECT COUNT(*) FROM chunks c WHERE c.workspace_id = w.id) AS chunk_count
+           FROM workspaces w WHERE w.user_id = ? ORDER BY w.created_at ASC`
+        )
+        .all(String(userId))
+    : db
+        .prepare(
+          `SELECT w.*,
+                  (SELECT COUNT(*) FROM documents d WHERE d.workspace_id = w.id) AS doc_count,
+                  (SELECT COUNT(*) FROM chunks c WHERE c.workspace_id = w.id) AS chunk_count
+           FROM workspaces w ORDER BY w.created_at ASC`
+        )
+        .all()
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    docCount: r.doc_count,
+    chunkCount: r.chunk_count,
+  }))
+}
+
+export function createWorkspace(name, { userId = null } = {}) {
   const db = getDb()
   const clean = String(name || '').trim()
   if (!clean) throw badRequest('知识库名称不能为空', 'invalid_workspace_name')
   if (clean.length > 60) throw badRequest('知识库名称不能超过 60 个字符', 'invalid_workspace_name')
   const id = `ws-${crypto.randomBytes(6).toString('hex')}`
   const t = now()
-  db.prepare('INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)').run(id, clean, t, t)
+  db.prepare(
+    'INSERT INTO workspaces (id, name, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(id, clean, userId ? String(userId) : null, t, t)
   return { id, name: clean, createdAt: t, updatedAt: t, docCount: 0, chunkCount: 0 }
 }
 
-export function deleteWorkspace(id) {
-  if (id === DEFAULT_WORKSPACE_ID) throw badRequest('默认知识库不能删除', 'cannot_delete_default')
+export function deleteWorkspace(id, { userId = null } = {}) {
+  if (id === defaultWorkspaceId(userId)) {
+    throw badRequest('默认知识库不能删除', 'cannot_delete_default')
+  }
+  if (!workspaceRow(id, userId)) return false
   const db = getDb()
   return transaction((tx) => {
     tx.prepare('DELETE FROM chunks WHERE workspace_id = ?').run(id)
@@ -75,20 +113,20 @@ export function deleteWorkspace(id) {
   })
 }
 
-function ensureWorkspace(id) {
-  const db = getDb()
-  const row = db.prepare('SELECT id FROM workspaces WHERE id = ?').get(id)
-  if (!row) throw notFound('知识库不存在')
+function ensureWorkspace(id, userId = null) {
+  if (!workspaceRow(id, userId)) throw notFound('知识库不存在')
 }
 
-export function listDocuments(workspaceId = DEFAULT_WORKSPACE_ID) {
+export function listDocuments(workspaceId, { userId = null } = {}) {
+  const wsId = workspaceId || defaultWorkspaceId(userId)
+  ensureWorkspace(wsId, userId)
   const db = getDb()
   return db
     .prepare(
       `SELECT id, workspace_id, name, mime, size, chars, chunk_count, status, stage, progress, attempts, error, source_url, created_at, updated_at
        FROM documents WHERE workspace_id = ? ORDER BY created_at DESC`
     )
-    .all(workspaceId)
+    .all(wsId)
     .map((r) => ({
       id: r.id,
       workspaceId: r.workspace_id,
@@ -109,14 +147,16 @@ export function listDocuments(workspaceId = DEFAULT_WORKSPACE_ID) {
 }
 
 /** 单个文档的详情（含切块进度），前端轮询用 */
-export function getDocument(id) {
+export function getDocument(id, { userId = null } = {}) {
   const db = getDb()
   const r = db
     .prepare(
-      `SELECT id, workspace_id, name, mime, size, chars, chunk_count, status, stage, progress, attempts, error, source_url, created_at, updated_at
-       FROM documents WHERE id = ?`
+      `SELECT d.id, d.workspace_id, d.name, d.mime, d.size, d.chars, d.chunk_count, d.status, d.stage,
+              d.progress, d.attempts, d.error, d.source_url, d.created_at, d.updated_at
+       FROM documents d JOIN workspaces w ON w.id = d.workspace_id
+       WHERE d.id = ?${userId ? ' AND w.user_id = ?' : ''}`
     )
-    .get(String(id))
+    .get(...(userId ? [String(id), String(userId)] : [String(id)]))
   if (!r) return null
   return {
     id: r.id,
@@ -143,9 +183,9 @@ export function documentRow(id) {
 }
 
 /** 创建待处理的文档行（异步流水线的第一步，文件此时还没解析） */
-export function createDocument(input) {
-  const workspaceId = input.workspaceId || DEFAULT_WORKSPACE_ID
-  ensureWorkspace(workspaceId)
+export function createDocument(input, { userId = null } = {}) {
+  const workspaceId = input.workspaceId || defaultWorkspaceId(userId)
+  ensureWorkspace(workspaceId, userId)
   const db = getDb()
   const id = `doc-${crypto.randomBytes(8).toString('hex')}`
   const t = now()
@@ -237,19 +277,28 @@ export function saveDocumentResult(id, { chunks, vectors, dim, chars }) {
   return getDocument(id)
 }
 
-export function findDocumentByHash(workspaceId, hash) {
+export function findDocumentByHash(workspaceId, hash, { userId = null } = {}) {
+  const wsId = workspaceId || defaultWorkspaceId(userId)
+  ensureWorkspace(wsId, userId)
   const db = getDb()
-  const row = db.prepare('SELECT id, name FROM documents WHERE workspace_id = ? AND hash = ?').get(workspaceId, hash)
+  const row = db
+    .prepare('SELECT id, name FROM documents WHERE workspace_id = ? AND hash = ?')
+    .get(wsId, hash)
   return row ? { id: row.id, name: row.name } : null
 }
 
-export function deleteDocument(id) {
+export function deleteDocument(id, { userId = null } = {}) {
   const db = getDb()
   return transaction((tx) => {
-    const doc = tx.prepare('SELECT workspace_id FROM documents WHERE id = ?').get(id)
+    const doc = tx
+      .prepare(
+        `SELECT d.workspace_id FROM documents d JOIN workspaces w ON w.id = d.workspace_id
+         WHERE d.id = ?${userId ? ' AND w.user_id = ?' : ''}`
+      )
+      .get(...(userId ? [String(id), String(userId)] : [String(id)]))
     if (!doc) return false
-    tx.prepare('DELETE FROM chunks WHERE document_id = ?').run(id)
-    tx.prepare('DELETE FROM documents WHERE id = ?').run(id)
+    tx.prepare('DELETE FROM chunks WHERE document_id = ?').run(String(id))
+    tx.prepare('DELETE FROM documents WHERE id = ?').run(String(id))
     tx.prepare('UPDATE workspaces SET updated_at = ? WHERE id = ?').run(now(), doc.workspace_id)
     return true
   })
@@ -260,18 +309,19 @@ export function deleteDocument(id) {
  * `documents` 只算可用（ready）的，另外单独给出处理中与失败的数量——
  * 否则「文档 12 篇」里混着 5 篇失败的和 2 篇还在跑的，用户会以为检索坏了。
  */
-export function documentStats() {
+export function documentStats({ userId = null } = {}) {
   const db = getDb()
   const row = db
     .prepare(
       `SELECT
-         SUM(CASE WHEN status = 'ready' THEN 1 ELSE 0 END) AS ready,
-         SUM(CASE WHEN status IN ('pending', 'processing') THEN 1 ELSE 0 END) AS working,
-         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
-         COALESCE(SUM(CASE WHEN status = 'ready' THEN chunk_count ELSE 0 END), 0) AS chunks
-       FROM documents`
+         SUM(CASE WHEN d.status = 'ready' THEN 1 ELSE 0 END) AS ready,
+         SUM(CASE WHEN d.status IN ('pending', 'processing') THEN 1 ELSE 0 END) AS working,
+         SUM(CASE WHEN d.status = 'failed' THEN 1 ELSE 0 END) AS failed,
+         COALESCE(SUM(CASE WHEN d.status = 'ready' THEN d.chunk_count ELSE 0 END), 0) AS chunks
+       FROM documents d JOIN workspaces w ON w.id = d.workspace_id
+       ${userId ? 'WHERE w.user_id = ?' : ''}`
     )
-    .get()
+    .get(...(userId ? [String(userId)] : []))
   return {
     documents: row?.ready ?? 0,
     chunks: row?.chunks ?? 0,
@@ -378,9 +428,11 @@ const round3 = (n) => Math.round(n * 1000) / 1000
 export function search(
   workspaceId,
   queryVector,
-  { query = '', topK = 6, minScore = 0.12, documentIds = null, lambda = 0.72, debug = false } = {}
+  { query = '', topK = 6, minScore = 0.12, documentIds = null, lambda = 0.72, debug = false, userId = null } = {}
 ) {
   const db = getDb()
+  const wsId = workspaceId || defaultWorkspaceId(userId)
+  ensureWorkspace(wsId, userId)
   const limit = Math.max(1, Math.min(20, topK))
 
   // 按文档过滤在 SQL 里做：命中少量文档时不必把整个库的向量读进内存
@@ -392,7 +444,7 @@ export function search(
     : `SELECT c.id, c.document_id, c.seq, c.heading, c.text, c.embedding, c.dim, d.name AS doc_name
        FROM chunks c JOIN documents d ON d.id = c.document_id
        WHERE c.workspace_id = ?`
-  const rows = db.prepare(sql).all(workspaceId, ...(filterIds || []))
+  const rows = db.prepare(sql).all(wsId, ...(filterIds || []))
 
   if (rows.length === 0) {
     return debug ? { chunks: [], candidates: [], total: 0 } : []

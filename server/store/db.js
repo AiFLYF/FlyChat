@@ -21,7 +21,7 @@ let db = null
 let driver = 'off'
 let initError = null
 
-const SCHEMA_VERSION = 9
+const SCHEMA_VERSION = 10
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -160,9 +160,11 @@ CREATE TABLE IF NOT EXISTS presets (
 CREATE TABLE IF NOT EXISTS workspaces (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
+  user_id    TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_ws_user ON workspaces(user_id);
 
 CREATE TABLE IF NOT EXISTS documents (
   id          TEXT PRIMARY KEY,
@@ -243,12 +245,15 @@ export function migrateSchema(database) {
   ensureColumn('users', 'api_token_hash', 'TEXT')
   // 分享归属：多用户模式下普通用户只能管理自己创建的分享
   ensureColumn('shares', 'user_id', 'TEXT')
+  // 知识库归属：多用户模式下 workspace 必须按用户隔离
+  ensureColumn('workspaces', 'user_id', 'TEXT')
 
   // 索引放在迁移之后建：老库如果索引建在一个尚未添加的列上，SQLite 会直接报错
   ensureIndex('CREATE INDEX IF NOT EXISTS idx_msg_parent ON messages(parent_id)', 'messages')
   ensureIndex('CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id, updated_at DESC)', 'conversations')
   ensureIndex('CREATE INDEX IF NOT EXISTS idx_conv_folder ON conversations(folder_id)', 'conversations')
   ensureIndex('CREATE INDEX IF NOT EXISTS idx_folder_user ON folders(user_id)', 'folders')
+  ensureIndex('CREATE INDEX IF NOT EXISTS idx_ws_user ON workspaces(user_id)', 'workspaces')
 }
 
 export function initStorage() {

@@ -3,7 +3,7 @@ import { asyncHandler, badRequest, notFound, unavailable } from '../lib/errors.j
 import { storageStatus } from '../store/db.js'
 import { inc } from '../lib/metrics.js'
 import {
-  DEFAULT_WORKSPACE_ID,
+  defaultWorkspaceId,
   createWorkspace,
   deleteDocument,
   deleteWorkspace,
@@ -16,6 +16,7 @@ import { isDocumentId, pendingCount, removeUpload, retryDocument } from '../rag/
 import { retrieve, submitDocument, toSources } from '../rag/index.js'
 import { resolveEmbeddingProvider, defaultEmbeddingModel } from '../rag/embeddings.js'
 import { inspectBaseUrl } from '../lib/ssrf.js'
+import { currentUserId } from '../lib/auth.js'
 
 const router = Router()
 
@@ -36,36 +37,39 @@ const requireDocumentId = (req, _res, next) => {
 }
 
 /** 知识库总览：是否可用、用哪个模型做向量化、有多少文档 */
-router.get('/knowledge/status', requireStorage, (_req, res) => {
+router.get('/knowledge/status', requireStorage, (req, res) => {
+  const userId = currentUserId(req)
   const provider = resolveEmbeddingProvider()
   res.json({
     enabled: !!provider,
     embedding: provider
       ? { provider: provider.id, name: provider.name, model: defaultEmbeddingModel(provider) }
       : null,
-    ...documentStats(),
-    workspaces: listWorkspaces().length,
+    ...documentStats({ userId }),
+    workspaces: listWorkspaces({ userId }).length,
     pending: pendingCount(),
   })
 })
 
-router.get('/workspaces', requireStorage, (_req, res) => {
-  res.json({ items: listWorkspaces(), defaultId: DEFAULT_WORKSPACE_ID })
+router.get('/workspaces', requireStorage, (req, res) => {
+  const userId = currentUserId(req)
+  res.json({ items: listWorkspaces({ userId }), defaultId: defaultWorkspaceId(userId) })
 })
 
 router.post('/workspaces', requireStorage, (req, res) => {
-  const ws = createWorkspace(req.body?.name)
+  const ws = createWorkspace(req.body?.name, { userId: currentUserId(req) })
   inc('workspace_created_total')
   res.status(201).json(ws)
 })
 
 router.delete('/workspaces/:id', requireStorage, (req, res) => {
-  res.json({ ok: deleteWorkspace(req.params.id) })
+  res.json({ ok: deleteWorkspace(req.params.id, { userId: currentUserId(req) }) })
 })
 
 router.get('/documents', requireStorage, (req, res) => {
-  const workspaceId = String(req.query.workspaceId || DEFAULT_WORKSPACE_ID)
-  res.json({ items: listDocuments(workspaceId), workspaceId })
+  const userId = currentUserId(req)
+  const workspaceId = String(req.query.workspaceId || defaultWorkspaceId(userId))
+  res.json({ items: listDocuments(workspaceId, { userId }), workspaceId })
 })
 
 /**
@@ -78,7 +82,8 @@ router.get('/documents', requireStorage, (req, res) => {
  * - `url`：网页链接，后台会抓取并抽取正文（走 SSRF 校验，逐跳校验重定向）
  */
 router.post('/documents', requireStorage, (req, res, next) => {
-  const { workspaceId = DEFAULT_WORKSPACE_ID, name, mime, dataUrl, text, url } = req.body || {}
+  const userId = currentUserId(req)
+  const { workspaceId = defaultWorkspaceId(userId), name, mime, dataUrl, text, url } = req.body || {}
   if (!dataUrl && !text && !url) {
     return next(badRequest('缺少 dataUrl、text 或 url', 'missing_document'))
   }
@@ -93,7 +98,10 @@ router.post('/documents', requireStorage, (req, res, next) => {
   }
 
   try {
-    const result = submitDocument({ workspaceId, name, mime, dataUrl, text, url, size: req.body?.size })
+    const result = submitDocument(
+      { workspaceId, name, mime, dataUrl, text, url, size: req.body?.size },
+      { userId }
+    )
     if (result.duplicate) {
       inc('document_ingested_total', { duplicate: 'true' })
       return res.status(200).json({ ok: true, ...result })
@@ -116,22 +124,22 @@ router.post('/documents', requireStorage, (req, res, next) => {
 
 /** 单个文档的处理进度（前端轮询用） */
 router.get('/documents/:id', requireStorage, (req, res, next) => {
-  const doc = getDocument(req.params.id)
+  const doc = getDocument(req.params.id, { userId: currentUserId(req) })
   if (!doc) return next(notFound('文档不存在'))
   res.json(doc)
 })
 
 /** 失败重试：源文件还留着，重新入队即可 */
 router.post('/documents/:id/retry', requireStorage, (req, res, next) => {
-  const result = retryDocument(req.params.id)
+  const result = retryDocument(req.params.id, { userId: currentUserId(req) })
   if (!result.ok) return next(badRequest(result.error, 'retry_failed'))
   res.json({ ok: true })
 })
 
 router.delete('/documents/:id', requireStorage, requireDocumentId, (req, res) => {
-  const ok = deleteDocument(req.params.id)
+  const ok = deleteDocument(req.params.id, { userId: currentUserId(req) })
   // 行删没删掉都顺手清掉临时文件
-  removeUpload(req.params.id)
+  if (ok) removeUpload(req.params.id)
   res.json({ ok })
 })
 
@@ -140,8 +148,9 @@ router.post(
   '/retrieve',
   requireStorage,
   asyncHandler(async (req, res) => {
+    const userId = currentUserId(req)
     const {
-      workspaceId = DEFAULT_WORKSPACE_ID,
+      workspaceId = defaultWorkspaceId(userId),
       query,
       topK = 6,
       documentIds,
@@ -154,6 +163,7 @@ router.post(
       workspaceId,
       query,
       topK,
+      userId,
       documentIds: Array.isArray(documentIds) ? documentIds : null,
       minScore: Number.isFinite(Number(minScore)) ? Number(minScore) : undefined,
       // 调试模式要显式传 true：默认多返回一堆分数明细没意义，还容易泄露正文

@@ -65,7 +65,10 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
         apiFetchKnowledgeStatus().catch(() => null),
         apiFetchWorkspaces().catch(() => ({ items: [], defaultId: 'default' })),
       ])
-      const activeId = get().activeWorkspaceId || wsRes.defaultId || 'default'
+      const current = get().activeWorkspaceId
+      const activeId = wsRes.items.some((w) => w.id === current)
+        ? current
+        : wsRes.defaultId || wsRes.items[0]?.id || 'default'
       set({
         status,
         workspaces: wsRes.items,

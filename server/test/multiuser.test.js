@@ -425,6 +425,74 @@ test('MCP 配置清理：管理员删除测试 server', async () => {
   assert.equal(res.status, 200)
 })
 
+test('知识库工作区按用户隔离，不能读取或删除别人的库', async () => {
+  const asAdmin = client(adminCookie)
+  const asAlice = client(aliceCookie)
+
+  const adminWs = await asAdmin.json('/api/workspaces', {
+    method: 'POST',
+    body: { name: '管理员知识库' },
+  })
+  assert.equal(adminWs.status, 201, JSON.stringify(adminWs.body))
+  const aliceWs = await asAlice.json('/api/workspaces', {
+    method: 'POST',
+    body: { name: 'alice 知识库' },
+  })
+  assert.equal(aliceWs.status, 201, JSON.stringify(aliceWs.body))
+
+  const adminList = await asAdmin.json('/api/workspaces')
+  const aliceList = await asAlice.json('/api/workspaces')
+  assert.equal(adminList.status, 200)
+  assert.equal(aliceList.status, 200)
+  assert.ok(adminList.body.items.some((w) => w.id === adminWs.body.id))
+  assert.ok(!adminList.body.items.some((w) => w.id === aliceWs.body.id))
+  assert.ok(aliceList.body.items.some((w) => w.id === aliceWs.body.id))
+  assert.ok(!aliceList.body.items.some((w) => w.id === adminWs.body.id))
+  assert.match(adminList.body.defaultId, /^default-/)
+  assert.notEqual(adminList.body.defaultId, aliceList.body.defaultId)
+
+  // 直接猜别人的 workspaceId：列表、检索、删除都必须拒绝
+  assert.equal(
+    (await asAlice.json(`/api/documents?workspaceId=${encodeURIComponent(adminWs.body.id)}`)).status,
+    404
+  )
+  assert.equal(
+    (
+      await asAlice.json('/api/retrieve', {
+        method: 'POST',
+        body: { workspaceId: adminWs.body.id, query: '机密' },
+      })
+    ).status,
+    404
+  )
+  const crossDelete = await asAlice.json(`/api/workspaces/${adminWs.body.id}`, { method: 'DELETE' })
+  assert.equal(crossDelete.status, 200)
+  assert.equal(crossDelete.body.ok, false)
+
+  const stillThere = await asAdmin.json('/api/workspaces')
+  assert.ok(stillThere.body.items.some((w) => w.id === adminWs.body.id), '别人的删除不能生效')
+
+  // 文档 id 也要按 workspace 归属校验，不能靠猜 id 读到别人的文档
+  const db = getDb()
+  const docId = `doc-${'a'.repeat(16)}`
+  const t = Date.now()
+  db.prepare(
+    'INSERT INTO documents (id, workspace_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(docId, adminWs.body.id, '管理员机密文档', t, t)
+  assert.equal((await asAdmin.json(`/api/documents/${docId}`)).status, 200)
+  assert.equal((await asAlice.json(`/api/documents/${docId}`)).status, 404)
+  db.prepare('DELETE FROM documents WHERE id = ?').run(docId)
+
+  // 自己的默认库仍然不可删除
+  const ownDefault = await asAlice.json(`/api/workspaces/${aliceList.body.defaultId}`, {
+    method: 'DELETE',
+  })
+  assert.equal(ownDefault.status, 400)
+
+  await asAdmin.json(`/api/workspaces/${adminWs.body.id}`, { method: 'DELETE' })
+  await asAlice.json(`/api/workspaces/${aliceWs.body.id}`, { method: 'DELETE' })
+})
+
 test('彻底删除用户：会话、文件夹、公开分享一起清理', async () => {
   const asAdmin = client(adminCookie)
   const created = await asAdmin.json('/api/users', {
@@ -454,6 +522,12 @@ test('彻底删除用户：会话、文件夹、公开分享一起清理', async
   })
   assert.equal(folder.status, 201, JSON.stringify(folder.body))
 
+  const workspace = await asUser.json('/api/workspaces', {
+    method: 'POST',
+    body: { name: '待删除知识库' },
+  })
+  assert.equal(workspace.status, 201, JSON.stringify(workspace.body))
+
   const share = await asUser.json('/api/share', {
     method: 'POST',
     body: { conversationId: 'conv-delete-me' },
@@ -474,4 +548,5 @@ test('彻底删除用户：会话、文件夹、公开分享一起清理', async
   assert.equal(count('SELECT COUNT(*) AS n FROM conversations WHERE user_id = ?', userId), 0)
   assert.equal(count('SELECT COUNT(*) AS n FROM folders WHERE user_id = ?', userId), 0)
   assert.equal(count('SELECT COUNT(*) AS n FROM shares WHERE user_id = ?', userId), 0)
+  assert.equal(count('SELECT COUNT(*) AS n FROM workspaces WHERE user_id = ?', userId), 0)
 })

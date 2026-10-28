@@ -14,6 +14,7 @@ import { resolveTools } from '../tools/index.js'
 import { loadMcpTools, callMcpTool } from '../mcp/manager.js'
 import { retrieve, toSources } from '../rag/index.js'
 import { messageChain } from '../store/conversations.js'
+import { defaultWorkspaceId } from '../rag/store.js'
 import { storageStatus } from '../store/db.js'
 import { checkBudget } from '../store/budget.js'
 import { summarizeDropped, wrapSummary } from '../lib/compact.js'
@@ -290,12 +291,14 @@ router.post('/chat', async (req, res, next) => {
     // 契约：只要请求带了 workspaceId（或 knowledge:true），就视为「用户要用知识库」，
     // 空库时回一条提示而不是静默编造。前端据此只在确有可用文档时才带 workspaceId。
     if (body.workspaceId || body.knowledge === true) {
-      const workspaceId = String(body.workspaceId || 'default')
+      const userId = currentUserId(req)
+      const workspaceId = String(body.workspaceId || defaultWorkspaceId(userId))
       try {
         const query = lastUserQuery(plan.messages)
         const result = await retrieve({
           workspaceId,
           query,
+          userId,
           topK: Math.min(12, Math.max(1, Number(body.topK) || 6)),
           // 限定范围提问：「只在这几份文档里找答案」
           documentIds: Array.isArray(body.documentIds) ? body.documentIds.slice(0, 50) : null,

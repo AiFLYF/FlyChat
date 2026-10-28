@@ -17,6 +17,7 @@ import {
 } from '../store/users.js'
 import { clearSessionCookie, readCookie, requireUser, SESSION_COOKIE, sessionCookie } from '../lib/auth.js'
 import { storageStatus } from '../store/db.js'
+import { claimOwnerlessWorkspaces } from '../rag/store.js'
 import { inc } from '../lib/metrics.js'
 import { logger } from '../lib/logger.js'
 
@@ -158,9 +159,17 @@ router.post(
     const { username, password } = req.body || {}
     const user = createUser({ username, password, role: 'admin', displayName: req.body?.displayName })
 
-    // 老的无主会话认领给第一个管理员，否则用户会以为历史全丢了
+    // 老的无主会话/知识库认领给第一个管理员，否则用户会以为历史全丢了
     const claimed = claimOwnerlessConversations(user.id)
     if (claimed > 0) logger.info('已把历史会话认领给首个管理员', { userId: user.id, count: claimed })
+    try {
+      const claimedWorkspaces = claimOwnerlessWorkspaces(user.id)
+      if (claimedWorkspaces > 0) {
+        logger.info('已把历史知识库认领给首个管理员', { userId: user.id, count: claimedWorkspaces })
+      }
+    } catch {
+      // 知识库表还没建好时不影响初始化
+    }
 
     const { token } = createSession(user.id, { userAgent: req.get('user-agent') })
     res.setHeader('Set-Cookie', cookieFor(token))

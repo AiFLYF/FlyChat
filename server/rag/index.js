@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import {
-  DEFAULT_WORKSPACE_ID,
+  defaultWorkspaceId,
   createDocument,
   deleteDocument,
   findDocumentByHash,
@@ -23,8 +23,8 @@ import { embedTexts } from './embeddings.js'
  * 只做「建行 + 源文件落盘 + 入队」三件事，立即返回，不解析不向量化——
  * 真正的重活在后台 worker 里跑，进度写回 documents 表。
  */
-export function submitDocument(input) {
-  const workspaceId = input.workspaceId || DEFAULT_WORKSPACE_ID
+export function submitDocument(input, { userId = null } = {}) {
+  const workspaceId = input.workspaceId || defaultWorkspaceId(userId)
   const url = input.url ? String(input.url).trim() : ''
 
   let name = String(input.name || '').slice(0, 200)
@@ -54,19 +54,22 @@ export function submitDocument(input) {
   }
   const hash = crypto.createHash('sha256').update(hashSource).digest('hex').slice(0, 32)
 
-  const existing = findDocumentByHash(workspaceId, hash)
+  const existing = findDocumentByHash(workspaceId, hash, { userId })
   if (existing) {
     return { duplicate: true, documentId: existing.id, name: existing.name }
   }
 
-  const { id } = createDocument({
-    workspaceId,
-    name: name || '未命名文档',
-    mime: url ? 'text/html' : input.mime,
-    size: Number(input.size) || 0,
-    hash,
-    sourceUrl: url || undefined,
-  })
+  const { id } = createDocument(
+    {
+      workspaceId,
+      name: name || '未命名文档',
+      mime: url ? 'text/html' : input.mime,
+      size: Number(input.size) || 0,
+      hash,
+      sourceUrl: url || undefined,
+    },
+    { userId }
+  )
 
   // 落盘失败必须把刚建的行删掉：
   // 否则会留下一条永远 pending 的记录，而且它的 hash 已经占位，
@@ -79,7 +82,7 @@ export function submitDocument(input) {
         size = saveUpload(id, input.dataUrl)
       }
     } catch (err) {
-      deleteDocument(id)
+      deleteDocument(id, { userId })
       throw err
     }
     updateDocumentStatus(id, { size })
@@ -101,14 +104,16 @@ export function submitDocument(input) {
  * @param {boolean} [options.debug] 返回每条候选的分数明细，用于调参/排查「为什么搜不到」
  */
 export async function retrieve({
-  workspaceId = DEFAULT_WORKSPACE_ID,
+  workspaceId,
   query,
   topK = 6,
   signal,
   minScore,
   documentIds = null,
   debug = false,
+  userId = null,
 } = {}) {
+  const wsId = workspaceId || defaultWorkspaceId(userId)
   const q = String(query || '').trim()
   if (!q) return { chunks: [], context: '', timings: { totalMs: 0 } }
 
@@ -126,7 +131,14 @@ export async function retrieve({
   }
 
   const searchStarted = Date.now()
-  const outcome = searchChunks(workspaceId, queryVector, { query: q, topK, minScore, documentIds, debug })
+  const outcome = searchChunks(wsId, queryVector, {
+    query: q,
+    topK,
+    minScore,
+    documentIds,
+    debug,
+    userId,
+  })
   const searchMs = Date.now() - searchStarted
 
   // debug 时 search 返回 { chunks, candidates, total, passed }；否则直接是数组

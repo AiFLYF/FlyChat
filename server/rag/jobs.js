@@ -4,7 +4,7 @@ import { config } from '../config.js'
 import { extractText, extractUrl } from '../extract.js'
 import { chunkText, decorateChunk } from './chunk.js'
 import { embedTexts } from './embeddings.js'
-import { documentRow, saveDocumentResult, updateDocumentStatus } from './store.js'
+import { documentRow, getDocument, saveDocumentResult, updateDocumentStatus } from './store.js'
 import { logger } from '../lib/logger.js'
 
 /**
@@ -155,8 +155,8 @@ export async function processDocument(docId) {
 }
 
 /** 重试：清掉错误状态重新入队 */
-export function retryDocument(docId) {
-  const row = documentRow(docId)
+export function retryDocument(docId, { userId = null } = {}) {
+  const row = userId ? getDocument(docId, { userId }) : documentRow(docId)
   if (!row) return { ok: false, error: '文档不存在' }
   if (row.status !== 'failed' && row.status !== 'pending') {
     return { ok: false, error: `当前状态 ${row.status} 不能重试` }

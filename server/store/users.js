@@ -185,12 +185,21 @@ export function deleteUser(id) {
     .prepare('SELECT id FROM conversations WHERE user_id = ?')
     .all(userId)
     .map((row) => row.id)
+  const workspaceIds = db
+    .prepare('SELECT id FROM workspaces WHERE user_id = ?')
+    .all(userId)
+    .map((row) => row.id)
 
   transaction((tx) => {
     tx.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId)
     for (const conversationId of conversationIds) {
       tx.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId)
       tx.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)
+    }
+    for (const workspaceId of workspaceIds) {
+      tx.prepare('DELETE FROM chunks WHERE workspace_id = ?').run(workspaceId)
+      tx.prepare('DELETE FROM documents WHERE workspace_id = ?').run(workspaceId)
+      tx.prepare('DELETE FROM workspaces WHERE id = ?').run(workspaceId)
     }
     tx.prepare('DELETE FROM shares WHERE user_id = ?').run(userId)
     tx.prepare('DELETE FROM folders WHERE user_id = ?').run(userId)
