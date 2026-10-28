@@ -83,7 +83,7 @@ export function ConstellationHero({ className = '' }: { className?: string }) {
   return (
     <div className={`pointer-events-none absolute inset-0 overflow-hidden ${className}`} aria-hidden="true">
       {/* 顶部柔和环境弥散光晕 */}
-      <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[520px] h-[260px] rounded-full bg-gradient-to-br from-blue-500/10 via-indigo-500/10 to-purple-500/5 blur-3xl" />
+      <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[min(520px,100vw)] h-[260px] rounded-full bg-gradient-to-br from-blue-500/10 via-indigo-500/10 to-purple-500/5 blur-3xl" />
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full opacity-60 dark:opacity-40" />
     </div>
   )

@@ -15,12 +15,14 @@
   --raised: #ffffff;
   --hover: #ebebed;
   --hover-soft: #f3f3f4;
-  /* 文字色阶：ink-1/2/3 均满足 WCAG AA（对 --canvas ≥ 4.5:1）
-     ink-1 ≈ 16.9:1 / ink-2 ≈ 7.2:1 / ink-3 ≈ 4.5:1
+  /* 文字色阶：ink-1/2/3 均满足 WCAG AA（对 --canvas 与更深的 --sidebar 都 ≥ 4.5:1）
+     ink-1 ≈ 17.5:1 / ink-2 ≈ 7.6:1 / ink-3 ≈ 5.1:1（对 canvas）/ 4.6:1（对 sidebar）
+     注意 ink-3 是按 --sidebar（#ececed）这个最深的浅色底标定的：
+     原先 #71717a 对 canvas 刚好 4.51，但落到侧边栏只有 4.09，AA 不达标。
      ink-4 仅供装饰（滚动条、分隔）与 disabled，不承载正文 */
   --ink-1: #18181b;
   --ink-2: #52525b;
-  --ink-3: #71717a;
+  --ink-3: #696970;
   --ink-4: #90909b;
   --rule: #e6e6e9;
   --rule-strong: #d6d6db;
@@ -31,6 +33,10 @@
   --accent: #3a6df0;
   --accent-hover: #2f5cd8;
   --accent-soft: #eef3ff;
+  /* 强调色「文字」专用：--accent 作背景填充没问题，但当文字色用时，
+     落在 --sidebar(#ececed) 上只有 3.85:1，达不到 AA。
+     text-accent 一律走这个更深的值（sidebar 4.74 / canvas 5.23 / 白底 5.6）。 */
+  --accent-ink: #2f5fd8;
   --on-accent: #ffffff;
   --danger: #d92929;
   --success: #17a05e;
@@ -83,7 +89,7 @@
   --hover-soft: #1e1e23;
   --ink-1: #f2f2f3;
   --ink-2: #adadb6;
-  --ink-3: #808089;
+  --ink-3: #8a8a93;
   --ink-4: #6a6a73;
   --rule: #26262b;
   --rule-strong: #38383f;
@@ -91,6 +97,8 @@
   --accent: #5b8bff;
   --accent-hover: #7ba3ff;
   --accent-soft: #1a2338;
+  /* 深色下 --accent 本身对深底已有 5.8:1，文字直接用同一个值即可 */
+  --accent-ink: #5b8bff;
   --on-accent: #ffffff;
   --danger: #f4736c;
   --success: #4ec98a;
@@ -156,7 +164,7 @@
 @utility text-ink-2 { color: var(--ink-2); }
 @utility text-ink-3 { color: var(--ink-3); }
 @utility text-ink-4 { color: var(--ink-4); }
-@utility text-accent { color: var(--accent); }
+@utility text-accent { color: var(--accent-ink); }
 @utility text-on-accent { color: var(--on-accent); }
 @utility text-on-bubble-user { color: var(--on-bubble-user); }
 @utility text-danger { color: var(--danger); }
@@ -613,6 +621,14 @@ body {
     var(--rule) 90%,
     transparent
   );
+}
+
+/* 内容区底部渐隐：提示「下面还有内容」。
+   滚动条在 Windows 上默认不显示、在 macOS 上自动隐藏，长内容弹窗
+   光看静止画面分不清有没有更多内容（实测设置弹窗在 1440×900 下正好切在半行上）。
+   纯装饰层，必须配 pointer-events-none，否则会挡住底部控件的点击。 */
+@utility fade-out-bottom {
+  background-image: linear-gradient(to top, var(--raised) 12%, transparent);
 }
 
 /* ---------------------------------------------------------------

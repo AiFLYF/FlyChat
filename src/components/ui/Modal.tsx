@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { usePresence } from '../../lib/usePresence'
 
@@ -27,7 +27,10 @@ export default function Modal({
 }) {
   const { mounted, closing } = usePresence(open, 200)
   const panelRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
+  /** 内容区下方是否还有内容：决定底部渐隐要不要画 */
+  const [moreBelow, setMoreBelow] = useState(false)
 
   // 焦点管理：打开时把焦点移入面板内第一个可聚焦控件，关闭后归还给触发它的元素
   useEffect(() => {
@@ -40,6 +43,47 @@ export default function Modal({
     ;(focusables?.[0] ?? panel)?.focus()
     return () => previous?.focus?.()
   }, [open])
+
+  /**
+   * Esc 关闭。
+   *
+   * 由弹窗外壳统一负责，而不是指望每个调用方各自实现：原先「分享与导出」弹窗
+   * 只挂了遮罩点击和关闭按钮，Esc 完全无效，与站内其它弹窗行为不一致
+   * （实测按 Esc 后遮罩仍在，后续点击全部被拦截）。
+   * 挂在 window 上而非面板上，是为了不依赖焦点落在面板内。
+   */
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  /**
+   * 跟踪内容区是否还能继续往下滚。
+   * 用 ResizeObserver 而不是只监听 scroll：切换标签页后内容高度变化（内容变长/变短），
+   * 只监听 scroll 的话底部渐隐会停在错误的状态。
+   * 只有取值真的变了才 setState，避免每帧滚动都触发重渲染。
+   */
+  useEffect(() => {
+    if (!open || !mounted) return
+    const el = bodyRef.current
+    if (!el) return
+    const update = () => {
+      const next = el.scrollTop + el.clientHeight < el.scrollHeight - 8
+      setMoreBelow((prev) => (prev === next ? prev : next))
+    }
+    update()
+    el.addEventListener('scroll', update, { passive: true })
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', update)
+      ro.disconnect()
+    }
+  }, [open, mounted])
 
   /**
    * 焦点陷阱：Tab / Shift+Tab 在弹窗内循环。
@@ -83,12 +127,15 @@ export default function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`r-2xl max-h-[92vh] w-full overflow-y-auto border border-rule bg-raised p-5 shadow-3 outline-none sm:max-h-[86vh] sm:p-6 ${
+        // 面板本身不滚动，改成「标题栏固定 + 内容区独立滚动」：
+        // 原先整个面板 overflow-y-auto，小屏滚到中间时标题和关闭按钮会一起滚出视口，
+        // 用户只剩 Esc 一条退路（实测 390×844 下关闭按钮 top=-290px）。
+        className={`r-2xl relative flex max-h-[92vh] w-full flex-col overflow-hidden border border-rule bg-raised shadow-3 outline-none sm:max-h-[86vh] ${
           closing ? 'anim-modal-sink' : 'anim-modal-rise'
         } ${className}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-6 flex items-center justify-between gap-3">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-rule/60 px-5 pb-3 pt-4 sm:px-6 sm:pb-3.5 sm:pt-5">
           <h2 id={titleId} className="text-lg font-semibold tracking-tight text-ink-1">
             {title}
           </h2>
@@ -103,7 +150,19 @@ export default function Modal({
             </button>
           </div>
         </div>
-        {children}
+        {/* min-h-0 不能省：flex 子项默认 min-height:auto，内容会把容器撑破、overflow 永不生效 */}
+        <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+          {children}
+        </div>
+        {/* 底部渐隐：告诉用户「下面还有」，滚到底自动消失。
+            直接挂在面板上而不是再包一层 relative 容器——包一层会让内容区高度
+            解析不到 flex 父级的实际高度（实测 h-full 退化成 auto，滚动直接失效）。 */}
+        {moreBelow && (
+          <div
+            aria-hidden
+            className="fade-out-bottom pointer-events-none absolute inset-x-0 bottom-0 h-9"
+          />
+        )}
       </div>
     </div>
   )
