@@ -584,6 +584,10 @@ test('彻底删除用户：会话、文件夹、公开分享一起清理', async
   assert.equal(share.status, 201, JSON.stringify(share.body))
   assert.equal((await anon.json(`/api/share/${share.body.id}`)).status, 200)
 
+  // 造一条该用户的用量记录，验证删除时一并清理
+  const { recordUsage } = await import('../store/usage.js')
+  recordUsage({ userId, provider: 'mock', model: 'm', total: 5, costUsd: 0.05 })
+
   const removed = await asAdmin.json(`/api/users/${userId}`, { method: 'DELETE' })
   assert.equal(removed.status, 200, JSON.stringify(removed.body))
 
@@ -591,13 +595,14 @@ test('彻底删除用户：会话、文件夹、公开分享一起清理', async
   assert.equal((await anon.json(`/api/share/${share.body.id}`)).status, 404)
   assert.equal((await anon.login('delete-me', 'delete-pass-123')).status, 400)
 
-  // 数据库里不能留下该用户的会话/文件夹/分享
+  // 数据库里不能留下该用户的会话/文件夹/分享/用量
   const db = getDb()
   const count = (sql, ...args) => db.prepare(sql).get(...args)?.n || 0
   assert.equal(count('SELECT COUNT(*) AS n FROM conversations WHERE user_id = ?', userId), 0)
   assert.equal(count('SELECT COUNT(*) AS n FROM folders WHERE user_id = ?', userId), 0)
   assert.equal(count('SELECT COUNT(*) AS n FROM shares WHERE user_id = ?', userId), 0)
   assert.equal(count('SELECT COUNT(*) AS n FROM workspaces WHERE user_id = ?', userId), 0)
+  assert.equal(count('SELECT COUNT(*) AS n FROM usage_events WHERE user_id = ?', userId), 0)
 })
 
 test('用量统计按用户隔离：普通用户看不到别人的花费', async () => {

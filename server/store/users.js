@@ -203,6 +203,8 @@ export function deleteUser(id) {
     }
     tx.prepare('DELETE FROM shares WHERE user_id = ?').run(userId)
     tx.prepare('DELETE FROM folders WHERE user_id = ?').run(userId)
+    // 用量记录也带归属：留着会变成无法解释的「幽灵账单」
+    tx.prepare('DELETE FROM usage_events WHERE user_id = ?').run(userId)
     tx.prepare('DELETE FROM users WHERE id = ?').run(userId)
   })
   return true
