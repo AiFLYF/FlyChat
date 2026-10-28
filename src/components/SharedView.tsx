@@ -16,6 +16,7 @@ import { BrandIcon, BrandLogo } from './ui/BrandLogo'
 import MarkdownRenderer from './MarkdownRenderer'
 import { fetchShareSnapshot, type SharedConversationData } from '../api/client'
 import { useChatStore } from '../store/chat'
+import { uid } from '../lib/id'
 
 interface SharedViewProps {
   shareId: string
@@ -74,8 +75,10 @@ export default function SharedView({ shareId, onClose }: SharedViewProps) {
     const newId = createConversation()
     renameConversation(newId, data.title || '导入的分享会话')
     for (const msg of data.messages) {
+      // 必须重新生成 id：分享快照里的 id 属于原作者的会话，
+      // 直接复用会在同步到服务端时按主键 upsert，覆盖原会话的消息内容。
       addMessage(newId, {
-        id: msg.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
+        id: uid(),
         role: msg.role,
         content: msg.content,
         reasoning: msg.reasoning,

@@ -1,5 +1,5 @@
 import { getDb, transaction } from './db.js'
-import { badRequest, notFound } from '../lib/errors.js'
+import { badRequest, conflict, notFound } from '../lib/errors.js'
 
 /**
  * 会话与消息仓库。
@@ -324,7 +324,14 @@ export function upsertConversation(input = {}) {
   )
 
   if (Array.isArray(input.messages) && input.messages.length) {
-    saveMessages(id, input.messages, { replace: true })
+    try {
+      saveMessages(id, input.messages, { replace: true })
+    } catch (err) {
+      // 消息写入失败（例如跨会话复用消息 id）时不能留下一个空壳会话：
+      // 客户端下次同步会以为「已存在」，于是永远走更新分支。
+      db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
+      throw err
+    }
   }
   return getConversation(id)
 }
@@ -440,6 +447,11 @@ export function saveMessages(conversationId, messages, { replace = false } = {})
     const maxSeq =
       tx.prepare('SELECT COALESCE(MAX(seq), -1) AS s FROM messages WHERE conversation_id = ?').get(id)?.s ?? -1
 
+    // 消息 id 是全局主键，不是「会话内主键」。
+    // 如果同一 id 已经属于别的会话，直接 upsert 会把别人的消息内容覆盖掉
+    // （典型来源：fork 公开分享时复用了原消息 id）。这里宁可拒绝，也不能静默改写别人的数据。
+    const foreignId = tx.prepare('SELECT conversation_id FROM messages WHERE id = ? AND conversation_id <> ?')
+
     const insert = tx.prepare(
       `INSERT INTO messages
        (id, conversation_id, seq, role, content, reasoning, model, status, error,
@@ -465,6 +477,14 @@ export function saveMessages(conversationId, messages, { replace = false } = {})
       if (!m || typeof m !== 'object') continue
       const msgId = String(m.id || '').trim()
       if (!msgId) throw badRequest('消息缺少 id')
+      const owner = foreignId.get(msgId, id)
+      if (owner) {
+        throw conflict(
+          `消息 id 已被会话 ${owner.conversation_id} 占用，不能跨会话复用`,
+          'message_id_conflict',
+          { messageId: msgId, conversationId: owner.conversation_id }
+        )
+      }
       const content = String(m.content ?? '')
       if (content.length > MAX_CONTENT) throw badRequest(`单条消息超过 ${MAX_CONTENT} 字符上限`)
       seq += 1

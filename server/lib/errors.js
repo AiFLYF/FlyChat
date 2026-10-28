@@ -23,6 +23,9 @@ export const unauthorized = (message = '需要访问令牌', code = 'unauthorize
 export const notFound = (message = '资源不存在', code = 'not_found') =>
   new AppError(message, { status: 404, code })
 
+export const conflict = (message, code = 'conflict', details) =>
+  new AppError(message, { status: 409, code, details })
+
 export const tooLarge = (message, code = 'payload_too_large') =>
   new AppError(message, { status: 413, code })
 

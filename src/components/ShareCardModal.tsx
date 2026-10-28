@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check, Copy, Download, Globe, Image as ImageIcon, Link2, Sparkles } from 'lucide-react'
 import { BrandIcon } from './ui/BrandLogo'
 import Modal from './ui/Modal'
@@ -44,6 +44,23 @@ export default function ShareCardModal({
   const [password, setPassword] = useState('')
   const [expiresInDays, setExpiresInDays] = useState<number>(7)
   const [linkError, setLinkError] = useState('')
+
+  /**
+   * 每次打开（或换一条消息）都重置分享链接相关状态。
+   * 这个弹窗在 ChatWindow 里是常驻挂载的，只切 open 属性；
+   * 不重置的话，关闭后再打开另一条消息，仍会显示上一条消息的链接和密码，
+   * 用户很容易把旧链接当成新链接复制出去。
+   */
+  useEffect(() => {
+    if (!open) return
+    setTab('card')
+    setShareUrl('')
+    setPassword('')
+    setExpiresInDays(7)
+    setLinkError('')
+    setCopiedLink(false)
+    setCopied(false)
+  }, [open, assistantMessage?.id])
 
   const handleExportPng = async () => {
     if (!cardRef.current || downloading) return

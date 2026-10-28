@@ -116,3 +116,28 @@ test('分享不存在的会话：404', async () => {
   const res = await post('/api/share', { conversationId: 'nope-nope' })
   assert.equal(res.status, 404)
 })
+
+test('跨会话复用消息 id：拒绝写入，原会话内容不被覆盖', async () => {
+  // 模拟「fork 分享时直接复用原消息 id」：新会话带着 conv-share-1 的消息 id 同步上来
+  const res = await post('/api/conversations', {
+    id: 'conv-fork-bad',
+    title: '错误复制的会话',
+    messages: [
+      { id: 'sm1', role: 'user', content: '被篡改的提问' },
+      { id: 'sm2', role: 'assistant', content: '被篡改的回答' },
+    ],
+  })
+  assert.equal(res.status, 409)
+  assert.equal((await res.json()).code, 'message_id_conflict')
+
+  // 原会话必须完好：既没被改写，也没被挪走
+  const original = await (await fetch(`${server.url}/api/conversations/conv-share-1`)).json()
+  const contents = original.messages.map((m) => m.content)
+  assert.ok(contents.includes('什么是向量数据库？'))
+  assert.ok(contents.includes('一种专门存向量、按相似度检索的数据库。'))
+  assert.ok(!contents.includes('被篡改的提问'))
+
+  // 失败的写入必须整体回滚：会话本身不应残留
+  const fork = await fetch(`${server.url}/api/conversations/conv-fork-bad`)
+  assert.equal(fork.status, 404)
+})
