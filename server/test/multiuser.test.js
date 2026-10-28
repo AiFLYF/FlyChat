@@ -6,7 +6,7 @@ import { prepareEnv, listen, loadApp } from './helpers/setup.js'
 prepareEnv({ MULTI_USER: 'true', BREAKER_THRESHOLD: '100' })
 
 const createApp = await loadApp()
-const { initStorage } = await import('../store/db.js')
+const { initStorage, getDb } = await import('../store/db.js')
 initStorage()
 
 const server = await listen(createApp())
@@ -423,4 +423,55 @@ test('MCP 配置清理：管理员删除测试 server', async () => {
   const asAdmin = client(adminCookie)
   const res = await asAdmin.json(`/api/mcp/servers/${mcpServerId}`, { method: 'DELETE' })
   assert.equal(res.status, 200)
+})
+
+test('彻底删除用户：会话、文件夹、公开分享一起清理', async () => {
+  const asAdmin = client(adminCookie)
+  const created = await asAdmin.json('/api/users', {
+    method: 'POST',
+    body: { username: 'delete-me', password: 'delete-pass-123' },
+  })
+  assert.equal(created.status, 201, JSON.stringify(created.body))
+  const userId = created.body.id
+
+  const login = await anon.login('delete-me', 'delete-pass-123')
+  assert.equal(login.status, 200, JSON.stringify(login.body))
+  const asUser = client(login.cookie)
+
+  const conv = await asUser.json('/api/conversations', {
+    method: 'POST',
+    body: {
+      id: 'conv-delete-me',
+      title: '待删除用户会话',
+      messages: [{ id: 'msg-delete-me', role: 'user', content: '只属于这个用户' }],
+    },
+  })
+  assert.equal(conv.status, 201, JSON.stringify(conv.body))
+
+  const folder = await asUser.json('/api/folders', {
+    method: 'POST',
+    body: { name: '待删除文件夹' },
+  })
+  assert.equal(folder.status, 201, JSON.stringify(folder.body))
+
+  const share = await asUser.json('/api/share', {
+    method: 'POST',
+    body: { conversationId: 'conv-delete-me' },
+  })
+  assert.equal(share.status, 201, JSON.stringify(share.body))
+  assert.equal((await anon.json(`/api/share/${share.body.id}`)).status, 200)
+
+  const removed = await asAdmin.json(`/api/users/${userId}`, { method: 'DELETE' })
+  assert.equal(removed.status, 200, JSON.stringify(removed.body))
+
+  // 公开链接必须失效，旧登录态也不能再用
+  assert.equal((await anon.json(`/api/share/${share.body.id}`)).status, 404)
+  assert.equal((await anon.login('delete-me', 'delete-pass-123')).status, 400)
+
+  // 数据库里不能留下该用户的会话/文件夹/分享
+  const db = getDb()
+  const count = (sql, ...args) => db.prepare(sql).get(...args)?.n || 0
+  assert.equal(count('SELECT COUNT(*) AS n FROM conversations WHERE user_id = ?', userId), 0)
+  assert.equal(count('SELECT COUNT(*) AS n FROM folders WHERE user_id = ?', userId), 0)
+  assert.equal(count('SELECT COUNT(*) AS n FROM shares WHERE user_id = ?', userId), 0)
 })

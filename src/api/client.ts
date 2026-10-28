@@ -400,6 +400,16 @@ export async function fetchServerUsage(): Promise<ServerUsageSummary | null> {
   }
 }
 
+/** 删除服务端会话；本地删除后调用，失败不阻塞离线使用 */
+export async function deleteConversationFromServer(id: string): Promise<void> {
+  await postJson(`/api/conversations/${encodeURIComponent(id)}`, undefined, 'DELETE')
+}
+
+/** 清空服务端当前用户的全部会话；与本地 clearAll 配套使用 */
+export async function clearConversationsFromServer(): Promise<void> {
+  await postJson('/api/conversations', { confirm: 'DELETE' }, 'DELETE')
+}
+
 export async function syncConversationToServer(conv: Conversation): Promise<boolean> {
   try {
     // 剥离附件大体积 base64 与缩略图，避免同步几 MB 冗余数据占用网络

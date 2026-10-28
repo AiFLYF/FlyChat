@@ -69,9 +69,11 @@ export default function McpSettings() {
       setTransport(server.transport)
       setCommand(server.command || '')
       setArgsStr(server.args ? server.args.join(' ') : '')
-      setEnvStr(server.env ? JSON.stringify(server.env, null, 2) : '')
+      // 服务端只回传 env/headers 的 key，不回传值；留空表示保留原配置，
+      // 避免用户只改名称时把已有密钥/Headers 清空。
+      setEnvStr('')
       setBaseUrl(server.baseUrl || '')
-      setHeadersStr(server.headers ? JSON.stringify(server.headers, null, 2) : '')
+      setHeadersStr('')
     } else {
       setEditingId(null)
       setName('')
@@ -308,12 +310,19 @@ export default function McpSettings() {
                 </div>
               </div>
               <div>
-                <label className={LABEL}>环境变量 (JSON 格式，可选)</label>
+                <label className={LABEL}>
+                  环境变量 (JSON 格式，可选)
+                  {editingId && <span className="ml-1 font-normal text-ink-4">留空保留原配置</span>}
+                </label>
                 <textarea
                   rows={2}
                   value={envStr}
                   onChange={(e) => setEnvStr(e.target.value)}
-                  placeholder={'{\n  "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxx"\n}'}
+                  placeholder={
+                    editingId
+                      ? '留空保留原环境变量；输入完整 JSON 可替换'
+                      : '{\n  "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxx"\n}'
+                  }
                   className={`${FIELD} resize-none font-mono text-xs`}
                 />
               </div>
@@ -332,12 +341,19 @@ export default function McpSettings() {
                 />
               </div>
               <div>
-                <label className={LABEL}>自定义 Headers (JSON 格式，可选)</label>
+                <label className={LABEL}>
+                  自定义 Headers (JSON 格式，可选)
+                  {editingId && <span className="ml-1 font-normal text-ink-4">留空保留原配置</span>}
+                </label>
                 <textarea
                   rows={2}
                   value={headersStr}
                   onChange={(e) => setHeadersStr(e.target.value)}
-                  placeholder={'{\n  "Authorization": "Bearer token"\n}'}
+                  placeholder={
+                    editingId
+                      ? '留空保留原 Headers；输入完整 JSON 可替换'
+                      : '{\n  "Authorization": "Bearer token"\n}'
+                  }
                   className={`${FIELD} resize-none font-mono text-xs`}
                 />
               </div>

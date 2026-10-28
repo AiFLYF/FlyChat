@@ -15,7 +15,15 @@ import Modal from './ui/Modal'
 import ProviderManager from './ProviderManager'
 import McpSettings from './mcp/McpSettings'
 import ApiGatewaySettings from './ApiGatewaySettings'
-import type { Assistant, Conversation, PromptItem, ProviderInfo, ThemeMode, ImageStatus } from '../types'
+import type {
+  Assistant,
+  Conversation,
+  ConversationFolder,
+  PromptItem,
+  ProviderInfo,
+  ThemeMode,
+  ImageStatus,
+} from '../types'
 
 const THEME_OPTIONS: { value: ThemeMode; label: string; icon: React.ReactNode }[] = [
   { value: 'light', label: '浅色', icon: <Sun size={13} /> },
@@ -131,12 +139,14 @@ function validateBackup(data: unknown): {
   conversations: Conversation[]
   prompts: PromptItem[]
   assistants: Assistant[]
+  folders: ConversationFolder[]
   skipped: number
 } {
   const result = {
     conversations: [] as Conversation[],
     prompts: [] as PromptItem[],
     assistants: [] as Assistant[],
+    folders: [] as ConversationFolder[],
     skipped: 0,
   }
   if (!data || typeof data !== 'object') return result
@@ -167,8 +177,38 @@ function validateBackup(data: unknown): {
         updatedAt: numOr(c.updatedAt, Date.now()),
         usingContext: typeof c.usingContext === 'boolean' ? c.usingContext : true,
         pinned: !!c.pinned,
+        starred: !!c.starred,
         assistantId: typeof c.assistantId === 'string' ? c.assistantId : undefined,
         sortIndex: typeof c.sortIndex === 'number' ? c.sortIndex : undefined,
+        folderId: typeof c.folderId === 'string' ? c.folderId : undefined,
+        tags: Array.isArray(c.tags) ? c.tags.filter((t): t is string => typeof t === 'string') : undefined,
+        documentIds: Array.isArray(c.documentIds)
+          ? c.documentIds.filter((id): id is string => typeof id === 'string')
+          : undefined,
+        summary: typeof c.summary === 'string' ? c.summary : undefined,
+        systemPrompt: typeof c.systemPrompt === 'string' ? c.systemPrompt : undefined,
+      })
+    }
+  }
+
+  if (Array.isArray(raw.folders)) {
+    for (const f of raw.folders) {
+      if (!f || typeof f !== 'object') {
+        result.skipped++
+        continue
+      }
+      const x = f as Record<string, unknown>
+      if (typeof x.id !== 'string' || typeof x.name !== 'string') {
+        result.skipped++
+        continue
+      }
+      result.folders.push({
+        id: x.id,
+        name: x.name,
+        emoji: typeof x.emoji === 'string' ? x.emoji : '📁',
+        color: typeof x.color === 'string' ? x.color : undefined,
+        collapsed: typeof x.collapsed === 'boolean' ? x.collapsed : undefined,
+        createdAt: numOr(x.createdAt, Date.now()),
       })
     }
   }
@@ -247,6 +287,7 @@ export default function SettingsModal() {
   const updateAssistant = useChatStore((s) => s.updateAssistant)
   const removeAssistant = useChatStore((s) => s.removeAssistant)
   const importConversations = useChatStore((s) => s.importConversations)
+  const setFolders = useChatStore((s) => s.setFolders)
 
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [loading, setLoading] = useState(false)
@@ -321,6 +362,7 @@ export default function SettingsModal() {
       version: 1,
       exportedAt: Date.now(),
       conversations: state.conversations,
+      folders: state.folders,
       prompts: state.prompts,
       assistants: state.assistants,
       settings: state.settings,
@@ -332,10 +374,15 @@ export default function SettingsModal() {
     try {
       const text = await file.text()
       const data = JSON.parse(text)
-      const { conversations, prompts, assistants, skipped } = validateBackup(data)
-      if (!conversations.length && !prompts.length && !assistants.length) {
+      const { conversations, prompts, assistants, folders, skipped } = validateBackup(data)
+      if (!conversations.length && !prompts.length && !assistants.length && !folders.length) {
         setNotice('导入失败：文件不是有效的 FlyChat 备份')
         return
+      }
+      if (folders.length) {
+        const existing = useChatStore.getState().folders
+        const existingIds = new Set(existing.map((f) => f.id))
+        setFolders([...existing, ...folders.filter((f) => !existingIds.has(f.id))])
       }
       if (conversations.length) importConversations(conversations)
       prompts.forEach((p) => addPrompt(p))

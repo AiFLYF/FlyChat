@@ -83,26 +83,54 @@ export function upsertServer(input = {}) {
   const transport = String(input.transport ?? '')
   if (!TRANSPORTS.includes(transport)) throw badRequest(`传输方式必须是 ${TRANSPORTS.join(' / ')}`, 'invalid_transport')
 
+  const id = input.id ? String(input.id) : ''
+  const existing = id ? db.prepare('SELECT * FROM mcp_servers WHERE id = ?').get(id) : null
+  if (id && !existing) throw notFound('要修改的 MCP server 不存在')
+
+  const parseObject = (raw) => {
+    if (!raw) return {}
+    try {
+      const value = JSON.parse(raw)
+      return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+    } catch {
+      return {}
+    }
+  }
+  const parseArray = (raw) => {
+    if (!raw) return []
+    try {
+      const value = JSON.parse(raw)
+      return Array.isArray(value) ? value : []
+    } catch {
+      return []
+    }
+  }
+  const existingArgs = parseArray(existing?.args)
+  const existingEnv = parseObject(existing?.env)
+  const existingHeaders = parseObject(existing?.headers)
+  // 编辑时未传的字段保持原值；传 {} 才是显式清空。
+  // 旧前端曾把 env/headers 的 key 数组回传，这里也按“未修改”处理，避免误删密钥。
+  const asObject = (value, fallback) =>
+    value && typeof value === 'object' && !Array.isArray(value) ? value : fallback
+
   let command = null
   let args = null
   let env = null
   let baseUrl = null
 
   if (transport === 'stdio') {
-    command = String(input.command ?? '').trim()
+    command = input.command === undefined ? String(existing?.command || '') : String(input.command).trim()
     if (!command) throw badRequest('stdio 传输需要 command（例如 node / npx / uvx）', 'invalid_command')
-    args = Array.isArray(input.args) ? input.args.map((a) => String(a)) : []
-    if (args.some((a) => !a.trim())) throw badRequest('args 不能有空项', 'invalid_args')
-    env = input.env && typeof input.env === 'object' ? input.env : {}
+    args = Array.isArray(input.args) ? input.args.map((a) => String(a)) : existingArgs
+    if (args.some((a) => !String(a).trim())) throw badRequest('args 不能有空项', 'invalid_args')
+    env = asObject(input.env, existingEnv)
   } else {
-    baseUrl = String(input.baseUrl ?? '').trim().replace(/\/+$/, '')
+    baseUrl = input.baseUrl === undefined ? String(existing?.base_url || '') : String(input.baseUrl).trim().replace(/\/+$/, '')
     if (!/^https?:\/\/.+/i.test(baseUrl)) throw badRequest('Base URL 必须以 http:// 或 https:// 开头', 'invalid_base_url')
+    // 切到 HTTP 时保留原 env；切回 stdio 时也保留 headers，便于来回切换不丢配置
+    env = asObject(input.env, existingEnv)
   }
-  const headers = input.headers && typeof input.headers === 'object' ? input.headers : {}
-
-  const id = input.id ? String(input.id) : ''
-  const existing = id ? db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(id) : null
-  if (id && !existing) throw notFound('要修改的 MCP server 不存在')
+  const headers = asObject(input.headers, existingHeaders)
 
   const record = {
     name,

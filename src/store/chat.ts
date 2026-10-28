@@ -1,5 +1,9 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+import {
+  clearConversationsFromServer,
+  deleteConversationFromServer,
+} from '../api/client'
 import { idbStorage } from '../lib/db'
 import { uid } from '../lib/id'
 import type {
@@ -145,14 +149,17 @@ export const useChatStore = create<ChatState>()(
         return conv.id
       },
 
-      deleteConversation: (id) =>
+      deleteConversation: (id) => {
         set((s) => {
           const conversations = s.conversations.filter((c) => c.id !== id)
           return {
             conversations,
             activeId: s.activeId === id ? conversations[0]?.id ?? null : s.activeId,
           }
-        }),
+        })
+        // 本地立即删除；服务端删除失败（离线/未同步/单用户无存储）不阻塞 UI
+        void deleteConversationFromServer(id).catch(() => {})
+      },
 
       restoreConversation: (conv) =>
         set((s) => ({
@@ -447,7 +454,10 @@ export const useChatStore = create<ChatState>()(
           ),
         })),
 
-      clearAll: () => set({ conversations: [], activeId: null }),
+      clearAll: () => {
+        set({ conversations: [], activeId: null })
+        void clearConversationsFromServer().catch(() => {})
+      },
 
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
 

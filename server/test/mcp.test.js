@@ -348,3 +348,56 @@ test('密钥不回传：env / headers 只给 key 名', async () => {
   assert.ok(!text.includes('sk-super-secret'), '密钥绝不能出现在响应里')
   assert.ok(text.includes('API_KEY') || text.includes('env'))
 })
+
+test('编辑 server 时未传 env/headers 会保留原密钥，不被空值清掉', async (t) => {
+  const { resolvedServer } = await import('../mcp/registry.js')
+  const stdio = await (
+    await post('/api/mcp/servers', {
+      name: 'keep-secret',
+      transport: 'stdio',
+      command: process.execPath,
+      args: [stdioScript],
+      env: { API_KEY: 'sk-keep-me' },
+    })
+  ).json()
+  t.after(() => fetch(`${server.url}/api/mcp/servers/${stdio.id}`, { method: 'DELETE' }))
+
+  // 只改名字，不带 env/args：原配置必须原样保留
+  const updated = await (
+    await post('/api/mcp/servers', {
+      id: stdio.id,
+      name: 'keep-secret-renamed',
+      transport: 'stdio',
+    })
+  ).json()
+  assert.equal(updated.name, 'keep-secret-renamed')
+  const resolved = resolvedServer(stdio.id)
+  assert.equal(resolved.env.API_KEY, 'sk-keep-me')
+  assert.deepEqual(resolved.args, [stdioScript])
+
+  // 兼容旧前端：把 key 数组误当对象回传时也不能清空原值
+  await post('/api/mcp/servers', {
+    id: stdio.id,
+    name: 'keep-secret-legacy',
+    transport: 'stdio',
+    env: ['API_KEY'],
+  })
+  assert.equal(resolvedServer(stdio.id).env.API_KEY, 'sk-keep-me')
+
+  const http = await (
+    await post('/api/mcp/servers', {
+      name: 'keep-header',
+      transport: 'http',
+      baseUrl: 'https://example.com/mcp',
+      headers: { Authorization: 'Bearer keep-me' },
+    })
+  ).json()
+  t.after(() => fetch(`${server.url}/api/mcp/servers/${http.id}`, { method: 'DELETE' }))
+  await post('/api/mcp/servers', {
+    id: http.id,
+    name: 'keep-header-renamed',
+    transport: 'http',
+    baseUrl: 'https://example.com/mcp',
+  })
+  assert.equal(resolvedServer(http.id).headers.Authorization, 'Bearer keep-me')
+})

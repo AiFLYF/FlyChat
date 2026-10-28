@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { getDb } from './db.js'
+import { getDb, transaction } from './db.js'
 import { badRequest, notFound } from '../lib/errors.js'
 
 /**
@@ -178,8 +178,24 @@ export function deleteUser(id) {
     throw badRequest('不能删除最后一个管理员', 'last_admin')
   }
   const db = getDb()
-  revokeUserSessions(id)
-  db.prepare('DELETE FROM users WHERE id = ?').run(String(id))
+  const userId = String(id)
+  // “彻底删除用户”必须同时清理其会话、文件夹和公开分享。
+  // 只删 users 行会留下可继续访问的公开分享，以及无人可认领的会话数据。
+  const conversationIds = db
+    .prepare('SELECT id FROM conversations WHERE user_id = ?')
+    .all(userId)
+    .map((row) => row.id)
+
+  transaction((tx) => {
+    tx.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId)
+    for (const conversationId of conversationIds) {
+      tx.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId)
+      tx.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)
+    }
+    tx.prepare('DELETE FROM shares WHERE user_id = ?').run(userId)
+    tx.prepare('DELETE FROM folders WHERE user_id = ?').run(userId)
+    tx.prepare('DELETE FROM users WHERE id = ?').run(userId)
+  })
   return true
 }
 
