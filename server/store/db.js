@@ -23,7 +23,7 @@ let initError = null
 
 const SCHEMA_VERSION = 10
 
-const SCHEMA = `
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -164,7 +164,10 @@ CREATE TABLE IF NOT EXISTS workspaces (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_ws_user ON workspaces(user_id);
+-- 注意：workspaces(user_id) 的索引**不能**写在这里。
+-- 老库的 workspaces 还没有 user_id 列，SCHEMA 先于 migrateSchema 执行，
+-- 建索引会直接 "no such column: user_id"，整个存储初始化被降级成不可用。
+-- 索引统一放在 migrateSchema 末尾，等 ensureColumn 加完列再建。
 
 CREATE TABLE IF NOT EXISTS documents (
   id          TEXT PRIMARY KEY,

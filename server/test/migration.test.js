@@ -183,3 +183,25 @@ test('极老的库（只有 conversations）也能安全迁移，不因缺表而
   assert.doesNotThrow(() => migrateSchema(db))
   assert.ok(columns(db, 'conversations').includes('folder_id'))
 })
+
+test('老库迁移：workspaces 缺 user_id 时，SCHEMA 里的索引不能先炸', async () => {
+  // 真实事故：把 CREATE INDEX ... ON workspaces(user_id) 写进 SCHEMA，
+  // 老库上 SCHEMA 先于 migrateSchema 执行，直接 "no such column: user_id"，
+  // 整个服务端存储被降级成不可用（健康检查显示 storage.available=false）。
+  const { SCHEMA } = await import('../store/db.js')
+  const db = new DatabaseSync(':memory:')
+  db.exec(`
+    CREATE TABLE workspaces (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    INSERT INTO workspaces (id, name, created_at, updated_at) VALUES ('default', '默认知识库', 1, 1);
+  `)
+
+  assert.doesNotThrow(() => db.exec(SCHEMA), 'SCHEMA 不能依赖迁移后才有的列')
+  assert.doesNotThrow(() => migrateSchema(db))
+  assert.ok(columns(db, 'workspaces').includes('user_id'))
+  assert.equal(db.prepare('SELECT name FROM workspaces WHERE id = ?').get('default').name, '默认知识库')
+})
