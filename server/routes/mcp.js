@@ -90,9 +90,15 @@ router.post(
 )
 
 /** 当前生效的工具定义（前端可用来展示「这个 server 提供了哪些工具」） */
-router.get('/mcp/tools', requireStorage, async (_req, res) => {
-  const { definitions } = await loadMcpTools()
-  res.json({ tools: definitions, count: definitions.length })
-})
+router.get(
+  '/mcp/tools',
+  requireStorage,
+  // 必须包 asyncHandler：Express 4 不会接住 async 函数里 reject 的 Promise，
+  // 一个上游 MCP server 连不上就变成请求永远挂着，前端只能等超时。
+  asyncHandler(async (_req, res) => {
+    const { definitions } = await loadMcpTools()
+    res.json({ tools: definitions, count: definitions.length })
+  })
+)
 
 export default router
