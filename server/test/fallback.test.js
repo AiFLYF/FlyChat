@@ -43,7 +43,8 @@ test('主服务商连接失败：自动降级到备用模型，用户仍拿到�
   const upstream = await startMockUpstream({ chunks: ['来自备用模型的回答'] })
   t.after(() => upstream.close())
 
-  // 9 号端口基本可以确定没人监听 → ECONNREFUSED（可重试错误）
+  // 9 号端口在 fetch 规范的屏蔽名单里：undici 压根不会去建连接，直接抛 `fetch failed`/`bad port`。
+  // 效果就是「主服务商完全不可达」，而且比随便挑一个空闲端口更稳定（不用担心真有人监听）。
   const primary = await createProvider('主服务商-坏的', 'http://127.0.0.1:9/v1')
   const backup = await createProvider('备用服务商', upstream.baseUrl)
   process.env.FALLBACK_MODELS = `${primary}:mock-model,${backup}:mock-model`

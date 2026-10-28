@@ -33,6 +33,48 @@ const MOCK_EMBEDDING_DIMS = {
   'nomic-embed-text': 768,
 }
 
+/**
+ * fetch 规范屏蔽的端口（undici 在建 TCP 连接**之前**就拒绝，报 `TypeError: fetch failed` / cause `bad port`）。
+ *
+ * `listen(0)` 会拿到系统动态端口区间里的任意一个，而那个区间完全可能覆盖这些端口——
+ * 本机是 1024–15000，里面就有 17 个。一旦假上游被分到这种端口，服务端根本连不过来，
+ * 表现为「上游 hits=0、回答为空」的偶发失败，且换台机器、换个端口区间就再也复现不出来。
+ * 所以随机分配时撞上就关掉重听；显式指定端口时不替用户做决定，只把话说清楚。
+ */
+const BLOCKED_PORTS = new Set([
+  1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102, 103, 104,
+  109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515,
+  526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720, 1723, 2049,
+  3659, 4045, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6697, 10080,
+])
+
+const MAX_PORT_RETRIES = 8
+
+/** 监听并返回实际端口；随机分配撞上 fetch 屏蔽端口就重来 */
+async function listenOnUsablePort(server, requestedPort) {
+  // 显式指定就先拦一道：绑上去也连不通，不如把原因说清楚（也免得端口被占用时报错跑偏）
+  if (requestedPort && BLOCKED_PORTS.has(requestedPort)) {
+    throw new Error(`端口 ${requestedPort} 被 fetch 规范屏蔽，服务端连不上假上游，请换一个端口`)
+  }
+
+  for (let attempt = 0; ; attempt += 1) {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(requestedPort || 0, '127.0.0.1', () => {
+        server.removeListener('error', reject)
+        resolve()
+      })
+    })
+    const { port } = server.address()
+    if (!BLOCKED_PORTS.has(port)) return port
+
+    await new Promise((resolve) => server.close(resolve))
+    if (attempt + 1 >= MAX_PORT_RETRIES) {
+      throw new Error(`连续 ${MAX_PORT_RETRIES} 次都被分到 fetch 屏蔽端口，请检查系统动态端口范围`)
+    }
+  }
+}
+
 export async function startMockUpstream(options = {}) {
   const {
     /** 依次返回的状态码；用完后返回 200 */
@@ -295,8 +337,7 @@ export async function startMockUpstream(options = {}) {
 
   server.on('clientError', (_err, socket) => socket.destroy())
 
-  await new Promise((resolve) => server.listen(options.port || 0, '127.0.0.1', resolve))
-  const { port } = server.address()
+  const port = await listenOnUsablePort(server, options.port)
 
   return {
     port,
