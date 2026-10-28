@@ -599,3 +599,23 @@ test('彻底删除用户：会话、文件夹、公开分享一起清理', async
   assert.equal(count('SELECT COUNT(*) AS n FROM shares WHERE user_id = ?', userId), 0)
   assert.equal(count('SELECT COUNT(*) AS n FROM workspaces WHERE user_id = ?', userId), 0)
 })
+
+test('用量统计按用户隔离：普通用户看不到别人的花费', async () => {
+  const { recordUsage } = await import('../store/usage.js')
+  const db = getDb()
+  const alice = db.prepare('SELECT id FROM users WHERE username = ?').get('alice')
+  const root = db.prepare('SELECT id FROM users WHERE username = ?').get('root')
+  assert.ok(alice?.id && root?.id, '测试账号应存在')
+
+  recordUsage({ userId: alice.id, provider: 'mock', model: 'm', total: 11, costUsd: 0.11 })
+  recordUsage({ userId: root.id, provider: 'mock', model: 'm', total: 99, costUsd: 0.99 })
+
+  const asAlice = client(aliceCookie)
+  const mine = await asAlice.json('/api/usage?days=0')
+  assert.equal(mine.status, 200)
+  assert.equal(mine.body.totals.totalTokens, 11, '只应统计自己的 token')
+  assert.equal(mine.body.totals.costUsd, 0.11)
+
+  const recent = await asAlice.json('/api/usage/recent?limit=10')
+  assert.ok(recent.body.items.every((it) => it.total === 11), '明细里也不能出现别人的记录')
+})

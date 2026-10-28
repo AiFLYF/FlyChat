@@ -125,6 +125,8 @@ export default function UsageModal({ open, onClose }: UsageModalProps) {
             </div>
             <div className="text-[10px] text-ink-3">
               ≈ ¥{(estimatedCost * 7.25).toFixed(3)}
+              {/* 本地视图没有按模型单价算，写清口径，免得和服务端账单对不上时以为算错了 */}
+              {!isServer && <span className="ml-1 opacity-70">（按 $3/$12 每百万 token 估算）</span>}
             </div>
           </div>
 

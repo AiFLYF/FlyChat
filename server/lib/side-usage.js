@@ -9,7 +9,7 @@ import { recordUsage } from '../store/usage.js'
  */
 export function recordSideCall(
   kind,
-  { provider = null, model = null, units = 1, latencyMs = null, status = 'ok' } = {}
+  { provider = null, model = null, units = 1, latencyMs = null, status = 'ok', userId = null } = {}
 ) {
   const unit =
     kind === 'image'
@@ -27,5 +27,6 @@ export function recordSideCall(
     latencyMs,
     status,
     kind,
+    userId,
   })
 }

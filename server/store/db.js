@@ -253,6 +253,8 @@ export function migrateSchema(database) {
   // 用量来源：chat / image / audio / search。
   // 图片与语音按次计费、没有 token，混在一起统计时分不清钱花在哪。
   ensureColumn('usage_events', 'kind', "TEXT NOT NULL DEFAULT 'chat'")
+  // 用量归属：多用户模式下普通用户只该看到自己的用量（预算仍是全实例的）
+  ensureColumn('usage_events', 'user_id', 'TEXT')
 
   // 索引放在迁移之后建：老库如果索引建在一个尚未添加的列上，SQLite 会直接报错
   ensureIndex('CREATE INDEX IF NOT EXISTS idx_msg_parent ON messages(parent_id)', 'messages')
@@ -260,6 +262,7 @@ export function migrateSchema(database) {
   ensureIndex('CREATE INDEX IF NOT EXISTS idx_conv_folder ON conversations(folder_id)', 'conversations')
   ensureIndex('CREATE INDEX IF NOT EXISTS idx_folder_user ON folders(user_id)', 'folders')
   ensureIndex('CREATE INDEX IF NOT EXISTS idx_ws_user ON workspaces(user_id)', 'workspaces')
+  ensureIndex('CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_events(user_id, created_at DESC)', 'usage_events')
 }
 
 export function initStorage() {

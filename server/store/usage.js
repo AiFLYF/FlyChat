@@ -17,13 +17,14 @@ export function recordUsage({
   latencyMs = null,
   status = 'ok',
   kind = 'chat',
+  userId = null,
 } = {}) {
   try {
     getDb()
       .prepare(
         `INSERT INTO usage_events
-         (conversation_id, provider, model, prompt, completion, total, cost_usd, latency_ms, status, kind, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (conversation_id, provider, model, prompt, completion, total, cost_usd, latency_ms, status, kind, user_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         conversationId ? String(conversationId) : null,
@@ -36,6 +37,7 @@ export function recordUsage({
         latencyMs == null ? null : Math.round(Number(latencyMs) || 0),
         status,
         kind,
+        userId ? String(userId) : null,
         Date.now()
       )
   } catch {
@@ -44,9 +46,12 @@ export function recordUsage({
 }
 
 /** 按天、按模型聚合。days=0 表示全部时间 */
-export function usageSummary({ days = 30 } = {}) {
+export function usageSummary({ days = 30, userId = null } = {}) {
   const db = getDb()
   const since = days > 0 ? Date.now() - days * 86_400_000 : 0
+  // 多用户模式只看自己的账；预算校验走的是全局 spend()，不受这里影响
+  const scope = userId ? ' AND user_id = ?' : ''
+  const scopeArg = userId ? [String(userId)] : []
 
   const totals =
     db
@@ -57,9 +62,9 @@ export function usageSummary({ days = 30 } = {}) {
                 COALESCE(SUM(total), 0) AS total,
                 COALESCE(SUM(cost_usd), 0) AS cost,
                 COALESCE(AVG(latency_ms), 0) AS avgLatency
-         FROM usage_events WHERE created_at >= ?`
+         FROM usage_events WHERE created_at >= ?${scope}`
       )
-      .get(since) || {}
+      .get(since, ...scopeArg) || {}
 
   const byDay = db
     .prepare(
@@ -67,10 +72,10 @@ export function usageSummary({ days = 30 } = {}) {
               COUNT(*) AS requests,
               COALESCE(SUM(total), 0) AS tokens,
               COALESCE(SUM(cost_usd), 0) AS cost
-       FROM usage_events WHERE created_at >= ?
+       FROM usage_events WHERE created_at >= ?${scope}
        GROUP BY day ORDER BY day ASC`
     )
-    .all(since)
+    .all(since, ...scopeArg)
 
   const byModel = db
     .prepare(
@@ -79,10 +84,10 @@ export function usageSummary({ days = 30 } = {}) {
               COALESCE(SUM(completion), 0) AS completion,
               COALESCE(SUM(total), 0) AS tokens,
               COALESCE(SUM(cost_usd), 0) AS cost
-       FROM usage_events WHERE created_at >= ?
+       FROM usage_events WHERE created_at >= ?${scope}
        GROUP BY provider, model ORDER BY tokens DESC`
     )
-    .all(since)
+    .all(since, ...scopeArg)
 
   return {
     range: { days, since },
@@ -99,13 +104,15 @@ export function usageSummary({ days = 30 } = {}) {
   }
 }
 
-export function recentUsage({ limit = 50 } = {}) {
+export function recentUsage({ limit = 50, userId = null } = {}) {
   const db = getDb()
+  const scope = userId ? 'WHERE user_id = ?' : ''
+  const args = userId ? [String(userId)] : []
   return db
     .prepare(
       `SELECT id, conversation_id AS conversationId, provider, model, prompt, completion, total,
-              cost_usd AS costUsd, latency_ms AS latencyMs, status, created_at AS createdAt
-       FROM usage_events ORDER BY id DESC LIMIT ?`
+              cost_usd AS costUsd, latency_ms AS latencyMs, status, kind, created_at AS createdAt
+       FROM usage_events ${scope} ORDER BY id DESC LIMIT ?`
     )
-    .all(Math.min(500, Math.max(1, Number(limit) || 50)))
+    .all(...args, Math.min(500, Math.max(1, Number(limit) || 50)))
 }

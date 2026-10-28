@@ -225,6 +225,7 @@ router.post('/chat', async (req, res, next) => {
     if (status === 'ok') stream.send({ type: 'done' })
     recordUsage({
       conversationId,
+      userId: currentUserId(req),
       provider: usedProviderId,
       model: usedModel,
       prompt: finalUsage.prompt,
@@ -587,7 +588,7 @@ router.post('/complete', async (req, res, next) => {
     usage || { prompt: estimateMessagesTokens(messages), completion: estimateTokens(text), total: 0, estimated: true }
   if (!finalUsage.total) finalUsage.total = finalUsage.prompt + finalUsage.completion
   const costUsd = estimateCost(info, finalUsage)
-  recordUsage({ provider: provider.id, model, ...finalUsage, costUsd, status: 'ok' })
+  recordUsage({ provider: provider.id, model, ...finalUsage, costUsd, status: 'ok', userId: currentUserId(req) })
   res.json({ text, usage: finalUsage, costUsd })
 })
 

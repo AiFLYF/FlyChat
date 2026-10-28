@@ -6,6 +6,7 @@ import { inc, observe } from '../lib/metrics.js'
 import { config } from '../config.js'
 import { checkBudget } from '../store/budget.js'
 import { recordSideCall } from '../lib/side-usage.js'
+import { currentUserId } from '../lib/auth.js'
 
 const router = Router()
 
@@ -81,6 +82,7 @@ router.post(
     const json = await upstream.json().catch(() => ({}))
     inc('audio_transcribe_total')
     recordSideCall('audio', {
+      userId: currentUserId(req),
       provider: provider.id,
       model: String(model),
       latencyMs: Date.now() - startedAt,
@@ -137,7 +139,7 @@ router.post(
     res.setHeader('Cache-Control', 'no-store')
     const buffer = Buffer.from(await upstream.arrayBuffer())
     inc('audio_speech_total')
-    recordSideCall('audio', { provider: provider.id, model: String(model) })
+    recordSideCall('audio', { userId: currentUserId(req), provider: provider.id, model: String(model) })
     res.send(buffer)
   })
 )

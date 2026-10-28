@@ -13,7 +13,7 @@ import { checkBudget, getBudget, setBudget } from '../store/budget.js'
 import { countUsers } from '../store/users.js'
 import { imageStatus } from '../images/index.js'
 import { asyncHandler } from '../lib/errors.js'
-import { requireAdmin } from '../lib/auth.js'
+import { currentUserId, requireAdmin } from '../lib/auth.js'
 import { recordSideCall } from '../lib/side-usage.js'
 
 const router = Router()
@@ -142,14 +142,15 @@ router.put('/budget', requireAdmin, (req, res, next) => {
 function usageHandler(req, res) {
   if (!storageStatus().available) return res.json({ available: false, totals: null })
   const days = Math.min(3650, Math.max(0, Number(req.query.days) || 30))
-  res.json({ available: true, ...usageSummary({ days }) })
+  // 多用户模式只返回自己的用量；预算校验（spend）仍是全实例口径
+  res.json({ available: true, ...usageSummary({ days, userId: currentUserId(req) }) })
 }
 router.get('/usage', usageHandler)
 router.get('/usage/summary', usageHandler)
 
 router.get('/usage/recent', (req, res) => {
   if (!storageStatus().available) return res.json({ available: false, items: [] })
-  res.json({ available: true, items: recentUsage({ limit: req.query.limit }) })
+  res.json({ available: true, items: recentUsage({ limit: req.query.limit, userId: currentUserId(req) }) })
 })
 
 /** 独立搜索接口：前端做「只搜不聊」或搜索建议时用 */
@@ -164,7 +165,11 @@ router.post(
     if (!budget.allowed) throw new AppError(budget.message, { status: 429, code: budget.code })
     const startedAt = Date.now()
     const result = await webSearch(query, { maxResults: req.body?.maxResults })
-    recordSideCall('search', { provider: result?.provider || 'search', latencyMs: Date.now() - startedAt })
+    recordSideCall('search', {
+      userId: currentUserId(req),
+      provider: result?.provider || 'search',
+      latencyMs: Date.now() - startedAt,
+    })
     res.json(result)
   })
 )

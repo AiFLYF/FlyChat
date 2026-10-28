@@ -10,6 +10,7 @@ import { estimateMessagesTokens, estimateTokens } from '../lib/tokens.js'
 import { checkBudget } from '../store/budget.js'
 import { getPreset, listPresets } from '../store/presets.js'
 import { parseModelRef } from '../lib/preset.js'
+import { currentUserId } from '../lib/auth.js'
 
 /**
  * OpenAI 兼容 API。
@@ -248,6 +249,7 @@ router.post(
       }
       const cost = estimateCost(info, usage)
       recordUsage({
+        userId: currentUserId(req),
         provider: result.provider.id,
         model: result.model,
         prompt: usage.prompt,
@@ -392,6 +394,7 @@ router.post(
         estimated: true,
       }
       recordUsage({
+        userId: currentUserId(req),
         provider: upstream?.provider?.id || provider.id,
         model: upstream?.model || model,
         prompt: finalUsage.prompt,

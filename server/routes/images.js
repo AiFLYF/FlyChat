@@ -4,6 +4,7 @@ import { checkBudget } from '../store/budget.js'
 import { generateImage, imageStatus } from '../images/index.js'
 import { inc } from '../lib/metrics.js'
 import { recordSideCall } from '../lib/side-usage.js'
+import { currentUserId } from '../lib/auth.js'
 
 const router = Router()
 
@@ -47,6 +48,7 @@ router.post(
     // 之前只检查预算、从不记账：连续生成图片永远不会推高已花费金额，
     // 「硬上限」对图片等于不存在。
     recordSideCall('image', {
+      userId: currentUserId(req),
       provider: result.provider,
       model: result.model,
       units: Array.isArray(result.data) && result.data.length ? result.data.length : Number(n) || 1,
