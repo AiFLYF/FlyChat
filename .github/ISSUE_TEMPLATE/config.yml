@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用与接口文档
+    url: https://github.com/AiFLYF/FlyChat/blob/main/docs/BACKEND.md
+    about: 接口清单、SSE 协议、RAG / Agent / MCP 行为、部署与存储细节
+  - name: 安全漏洞
+    url: https://github.com/AiFLYF/FlyChat/security/advisories/new
+    about: 请走私密渠道上报，不要在公开 issue 里披露细节

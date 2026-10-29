@@ -1,0 +1,45 @@
+name: 功能建议
+description: 提出新能力或改进现有体验
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        描述场景比描述方案更有用——先说清你在做什么、被什么卡住，我们再一起找最合适的做法。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决的问题
+      description: 现在是怎么做的？哪里不方便？
+      placeholder: 团队里每人都有多个 API Key，切换服务商要反复改配置，容易出错。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的方案
+      description: 你希望它长什么样？有参考实现也可以贴链接
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的替代方案
+      description: 试过哪些绕行办法，为什么不够好
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 改动范围
+      description: 你判断这大概动到哪一层
+      options:
+        - 只改前端
+        - 只改后端
+        - 前后端都要改
+        - 不确定
+    validations:
+      required: true
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: 参与意愿
+      options:
+        - label: 我愿意提 PR 实现这个功能
