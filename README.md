@@ -1,17 +1,54 @@
-# FlyChat
+<h1 align="center">FlyChat</h1>
 
-自托管的一体化 AI 对话平台。**一个 Node 进程 + 一个 SQLite 文件**：前端是 React 单页应用，后端是统一的流式代理，
-把 OpenAI / DeepSeek / Anthropic Claude / Google Gemini / Kimi / 智谱 GLM / 通义千问 / 豆包 / 硅基流动 / Groq /
-OpenRouter / Ollama 以及任意 OpenAI 兼容网关抹平成一套接口，并在其上提供知识库（RAG）、Agent 工具调用、MCP 扩展、
-多用户与成本硬上限。这些能力还会以 **OpenAI 兼容 API（`/v1`）** 再暴露一次——任何支持自定义 OpenAI 接口的客户端
-（Chatbox、Cherry Studio、各类 SDK）都能直接把 FlyChat 当上游用。
+<p align="center"><b>自托管的一体化 AI 对话平台</b><br>一个 Node 进程 + 一个 SQLite 文件，把十几家模型、知识库、Agent 与多用户装进同一个界面</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-2f6feb?style=flat-square"></a>
+  <a href="https://nodejs.org"><img alt="Node.js >= 22.5" src="https://img.shields.io/badge/node-%E2%89%A5%2022.5-43853d?style=flat-square&logo=node.js&logoColor=white"></a>
+  <a href="#技术栈"><img alt="No native dependencies" src="https://img.shields.io/badge/native%20deps-none-8957e5?style=flat-square"></a>
+  <a href="Dockerfile"><img alt="Docker ready" src="https://img.shields.io/badge/docker-ready-2496ed?style=flat-square&logo=docker&logoColor=white"></a>
+</p>
+
+![FlyChat 对话界面：表格、代码块与流式输出](docs/assets/screenshot-light.png)
+
+前端是 React 单页应用，后端是统一的流式代理，把 OpenAI / DeepSeek / Anthropic Claude / Google Gemini / Kimi /
+智谱 GLM / 通义千问 / 豆包 / 硅基流动 / Groq / OpenRouter / Ollama 以及任意 OpenAI 兼容网关抹平成一套接口，
+并在其上提供知识库（RAG）、Agent 工具调用、MCP 扩展、多用户与成本硬上限。这些能力还会以
+**OpenAI 兼容 API（`/v1`）** 再暴露一次——任何支持自定义 OpenAI 接口的客户端（Chatbox、Cherry Studio、各类 SDK）
+都能直接把 FlyChat 当上游用。
 
 零原生依赖：不需要 Python、不需要外部向量库、不需要独立数据库进程，`npm install && npm run dev` 即可跑起来。
 
-| 想深入看 | 去哪 |
-|---|---|
-| 完整接口清单、SSE 协议、RAG / Agent / MCP 行为、多用户、部署与存储细节 | [docs/BACKEND.md](docs/BACKEND.md) |
-| 与 Open WebUI / LibreChat / AnythingLLM / LobeChat 的对比调研与路线图 | [docs/ROADMAP.md](docs/ROADMAP.md) |
+> 想深入看：[后端与接口文档](docs/BACKEND.md) ·
+> [竞品调研与路线图](docs/ROADMAP.md) · [贡献指南](CONTRIBUTING.md) ·
+> [安全策略](SECURITY.md) · [变更日志](CHANGELOG.md)
+
+## 目录
+
+- [截图](#截图)
+- [快速开始](#快速开始)
+- [功能特性](#功能特性)
+- [配置说明](#配置说明)
+- [接口一览](#接口一览)
+- [项目结构](#项目结构)
+- [开发与测试](#开发与测试)
+- [安全说明](#安全说明)
+- [技术栈](#技术栈)
+- [参与贡献](#参与贡献)
+- [License](#license)
+
+## 截图
+
+<table>
+  <tr>
+    <td width="50%"><a href="docs/assets/screenshot-dark.png"><img src="docs/assets/screenshot-dark.png" alt="深色主题"></a><br><sub><b>深色主题</b>：亮 / 暗 / 跟随系统三档，代码高亮同步换肤</sub></td>
+    <td width="50%"><a href="docs/assets/screenshot-settings.png"><img src="docs/assets/screenshot-settings.png" alt="模型服务配置"></a><br><sub><b>模型服务</b>：网页里增删改服务商、在线改模型列表、一键连通性自检</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/assets/screenshot-mobile.png"><img src="docs/assets/screenshot-mobile.png" alt="移动端"></a><br><sub><b>移动端</b>：侧栏收进抽屉，输入区与桌面端共用同一个组件</sub></td>
+    <td width="50%"><b>关于这些截图</b><br><sub>由仓库内置的「闪测模型」假上游生成（<code>npm run mock:flash</code>），不消耗任何真实 API 额度，也不包含任何真实密钥。</sub></td>
+  </tr>
+</table>
 
 ## 快速开始
 
@@ -330,7 +367,7 @@ flyweb/
 │   ├── test/                     # node:test 测试套件（自带假上游，不需要真 Key）
 │   └── data/                     # flychat.db、custom-providers.json（不进 Git）
 ├── scripts/                      # clean / smoke-api / smoke-ui / mock-flash / e2e / audit-ui
-├── docs/                         # BACKEND.md（后端权威说明）、ROADMAP.md（调研与路线图）
+├── docs/                         # BACKEND.md（后端权威说明）、ROADMAP.md（调研与路线图）、assets/（README 截图）
 ├── Dockerfile / docker-compose.yml
 └── index.html
 ```
@@ -378,9 +415,19 @@ OpenAI 兼容网关、数据库迁移。加新适配器时，先在 `server/test
 | 测试 | `node:test`（自带假上游）+ Playwright 冒烟 / E2E |
 | 部署 | Docker 多阶段构建（node:22-alpine，非 root）+ docker-compose |
 
+## 参与贡献
+
+- **报缺陷 / 提建议**：走 [Issues](https://github.com/AiFLYF/FlyChat/issues)，模板会提示需要哪些信息；
+  附上版本、部署方式和服务端日志，定位会快很多；
+- **提代码**：先读 [CONTRIBUTING.md](CONTRIBUTING.md)——分支模型、提交规范、门禁命令、新增服务商的步骤都在里面；
+- **安全问题**：按 [SECURITY.md](SECURITY.md) 走私密渠道，不要在公开 issue 里披露细节；
+- **版本变更**：见 [CHANGELOG.md](CHANGELOG.md)。
+
+把 bug 说清楚、把复现步骤写完整，本身就是很有价值的贡献。
+
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 AiFLYF
 
 ---
 
