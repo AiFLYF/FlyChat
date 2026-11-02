@@ -150,26 +150,12 @@ export function listConversations({
     })
   }
 
-  // total 按同样的过滤条件算，否则分页会显示成「1/50」这种对不上的数
-  const countWhere = []
-  const countArgs = []
-  if (scoped) {
-    countWhere.push('user_id = ?')
-    countArgs.push(String(userId))
-  }
-  if (unfiled || (folderId !== undefined && !folderId)) {
-    countWhere.push('folder_id IS NULL')
-  } else if (folderId) {
-    countWhere.push('folder_id = ?')
-    countArgs.push(String(folderId))
-  }
+  // total 按同样的过滤条件算，否则分页会显示成「1/50」这种对不上的数。
+  // 搜索词（标题或消息内容匹配）也必须进 count——否则搜出 38 条却显示总数 52，
+  // 前端分页器会按 52 页可翻，翻过去全是空页。
   const total = tag
     ? rows.length
-    : db
-        .prepare(
-          `SELECT COUNT(*) AS n FROM conversations${countWhere.length ? ` WHERE ${countWhere.join(' AND ')}` : ''}`
-        )
-        .get(...countArgs)?.n ?? 0
+    : db.prepare(`SELECT COUNT(*) AS n FROM conversations c ${whereSql}`).get(...args)?.n ?? 0
 
   return { items: rows.map(rowToConversation), total, limit: safeLimit, offset: safeOffset }
 }

@@ -244,8 +244,13 @@ test('会话搜索：标题与消息内容都能命中', async () => {
   const byMessage = await json(await api('/api/conversations?q=HNSW'))
   assert.ok(byMessage.body.items.some((c) => c.id === 'conv-search-1'))
 
+  // total 必须跟搜索条件一致：否则前端分页器会按未过滤的总数显示空页
+  assert.equal(byTitle.body.total, byTitle.body.items.length, '搜索时 total 要按同样条件统计')
+  assert.equal(byMessage.body.total, byMessage.body.items.length)
+
   const none = await json(await api('/api/conversations?q=完全不存在的关键词xyz'))
   assert.equal(none.body.items.length, 0)
+  assert.equal(none.body.total, 0)
 
   await api('/api/conversations/conv-search-1', { method: 'DELETE' })
 })

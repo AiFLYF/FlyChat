@@ -274,6 +274,19 @@ export function createApp() {
   // —— 生产环境单端口部署：同一个进程同时提供前端静态文件 ——
   const distDir = path.join(ROOT_DIR, 'dist')
   const indexFile = path.join(distDir, 'index.html')
+  /**
+   * 分享页每次请求都要注入 OG meta，如果每次都 readFileSync 全量读 index.html，
+   * 被抓取器/爬虫集中访问时就是重复的同步 IO。按 mtime 缓存：
+   * 文件没变直接用缓存，重新构建过（mtime 变化）才重新读盘。
+   */
+  let indexHtmlCache = { mtimeMs: -1, content: '' }
+  const readIndexHtml = () => {
+    const { mtimeMs } = fs.statSync(indexFile)
+    if (mtimeMs !== indexHtmlCache.mtimeMs) {
+      indexHtmlCache = { mtimeMs, content: fs.readFileSync(indexFile, 'utf8') }
+    }
+    return indexHtmlCache.content
+  }
   if (fs.existsSync(indexFile)) {
     // 带 hash 的静态资源可以长缓存；index.html 必须每次校验
     app.use(
@@ -307,7 +320,7 @@ export function createApp() {
             : buildShareMeta(share)
           : { title: '分享不存在', description: '这条分享链接不存在或已被取消。', noindex: true }
 
-        const html = fs.readFileSync(indexFile, 'utf8')
+        const html = readIndexHtml()
         res.setHeader('Content-Type', 'text/html; charset=utf-8')
         res.setHeader('Cache-Control', 'no-cache')
         res.send(injectMeta(html, meta, { url: `${base}/s/${encodeURIComponent(req.params.id)}` }))
