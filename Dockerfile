@@ -6,7 +6,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 # --ignore-scripts：esbuild 的 postinstall 在受限环境里经常失败，
 # 它的平台二进制由 @esbuild/linux-x64 这类 optionalDependencies 提供，不跑脚本也能用
-RUN npm install --ignore-scripts --no-audit --no-fund
+RUN npm ci --ignore-scripts --no-audit --no-fund
 
 COPY . .
 RUN npm run build

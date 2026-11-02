@@ -132,7 +132,7 @@ server/
 | PATCH | `/api/auth/profile` | 改自己的显示名 |
 | GET/POST | `/api/users` | 用户列表 / 新建（管理员） |
 | PATCH/DELETE | `/api/users/:id` | 改角色/禁用/重置密码 / 删除（管理员） |
-| POST | `/api/conversations/claim-orphans` | 认领无归属的历史会话（管理员） |
+| POST | `/api/conversations/claim-orphans` | 认领无归属的历史会话/文件夹/知识库（管理员） |
 | POST | `/api/images/generations` | 生成图片（OpenAI 兼容形状） |
 | GET | `/api/images/status` | 有没有可用的图像模型 |
 | POST | `/v1/images/generations` | 同上，给第三方客户端用 |
@@ -257,8 +257,18 @@ server/
     不复位的话这些行永远卡住，既点不了重试也删不掉语义。
   - **落盘失败不留孤儿行**：`createDocument` 之后若写盘失败，立刻 `deleteDocument`，
     否则会留下一条永远 pending 的记录，且它的 hash 已占位，用户改好文件重传也会被判成重复。
+  - **配额在判重之后检查**：单个工作区默认最多 500 篇、源文件合计 512MB
+    （`RAG_MAX_DOCS` / `RAG_MAX_MB`，0 表示不限）。超限回 `413`
+    （`document_quota_exceeded` / `document_bytes_exceeded`），但配额已满时重传同一篇
+    仍按「重复」返回 200，不占新名额。`documents.size` 以服务端落盘实测值为准，
+    客户端传的 `size` 只当展示提示，不作配额依据。失败文件的源文件保留 14 天供重试，
+    启动时 `cleanupOrphanUploads()` 会清掉无数据库行、已 ready 的残留与超期失败文件。
 - **零原生依赖**：向量存 SQLite BLOB，检索时在 Node 里做全量余弦扫描。
   个人/小团队规模（几万块）几十毫秒；规模再大时把 `rag/store.js#search` 换成外部向量库即可，接口不变。
+- **内存有界**：打分用 SQLite 的逐行迭代（`iterate`）而不是一次性 `all()`，
+  只保留分数最高的 256 条（MMR 实际最多用 `topK×6 ≤ 120` 条）。
+  查询词只解析一次、每块文本只小写化一次——万级块时不再同时驻留全库文本与向量，
+  最终排序与全量数组排序逐位一致（有 4,608 组新旧实现对照验证与回归测试兜底）。
 - **切块**：按 Markdown 标题与段落边界切，每块带「文档 / 章节」抬头，相邻块留重叠。
 - **混合检索（四路信号 + MMR）**：
   `0.62 × 余弦 + 0.20 × 关键词覆盖 + 0.14 × 硬词命中 + 0.04 × 章节命中`，
@@ -372,6 +382,9 @@ Ollama 下默认 `nomic-embed-text`）。不配则自动选第一个 OpenAI 兼�
 - **摘要模型选择**：`SUMMARY_MODEL=provider:model` > 已配置服务商里名字带 mini/flash/haiku 的便宜模型 > 第一个已配置服务商。
 - **失败降级**：摘要调用失败只降级为纯裁剪并发 notice，**绝不让对话失败**。
 - 开关：`CONTEXT_COMPACT=false` 关闭，退回直接丢弃。
+- **首 token 不被串行拖慢**：知识库检索、历史摘要、MCP 工具装载互相独立，
+  `/api/chat` 会在进入检索前同时发起三者，再按原位置 await；
+  `sources` / `notice` / `model_switch` 等事件的顺序与串行版完全一致。
 
 ### 5.095 子任务专用模型
 
@@ -434,6 +447,10 @@ body = applyPreset(body, preset)   // lib/preset.js
   这直接对应 LibreChat #7387「modelSpec 没法固定一组 MCP server」。
 - **参数白名单**：`params` 只保留认识的键并夹紧取值范围（`temperature` 0–2、`topP` 0–1），
   预设是长期存在的配置，不能存进脏值。
+- **多用户下按用户隔离**：新建/克隆的预设归当前用户，别人的预设不可见也不可改；
+  升级前没有归属的老预设是共享只读条目，普通用户可克隆后编辑。
+- **绑定的知识库必须可用**：`workspaceId` 不存在或不属于当前用户时不写入（返回里没有该字段），
+  复制共享预设时也不会把管理员私有库带进别人的副本；避免打开预设时突然 404。
 
 `/v1` 里预设会被当成一个「模型」暴露：
 
@@ -508,7 +525,11 @@ GET /api/conversations?tag=重要               // 按标签
 - **删除文件夹绝不删会话**：里面的会话 `folder_id` 置空回到「未分类」，响应里的 `moved`
   告诉前端移出了几个。顺手删掉几十个会话是最容易让人失去信任的操作。
 - **标签在入口清洗**：去空白、去重（大小写不敏感）、单个最长 24 字、最多 12 个，
-  逗号会被换成空格（避免「a,b」变成一个怪标签）。
+  逗号会被换成空格（避免「a,b」变成一个怪标签）。会话同步（`POST /api/conversations`）
+  与备份导入走同一套清洗，备份文件里的脏标签不会直接入库。
+- **文件夹引用要存在且属于自己**：`PATCH /api/conversations/:id` 传不存在/别人的
+  `folderId` 会明确报 `folder_not_found`；同步与导入路径则静默落成「未分类」，
+  不能让一条悬空引用把整次同步卡死。
 - **标签过滤不做子串误伤**：`tags` 是 JSON 数组字符串，SQL 里先 `LIKE` 粗筛，
   再在内存里精确比对，所以「重要」不会匹配到「不重要」。
 - **`total` 与过滤条件一致**：否则分页会显示成「1 / 50」这种对不上的数。
@@ -538,6 +559,9 @@ GET /api/conversations?tag=重要               // 按标签
 - **分享归属**：`shares.user_id`（schema 迁移自动补列）。按 `conversationId` 创建分享时
   校验会话归属，不能把别人的会话做成公开链接；分享列表只返回自己创建的（admin 看全部），
   删除别人的分享返回 404。老数据里的无主分享归管理员可见。
+- **预设归属**：`presets.user_id`（schema 迁移自动补列）。新建/克隆的预设归当前用户，
+  列表、读取、修改、删除、`/v1` 的可用预设都按用户过滤；别人的预设返回 404。
+  升级前的无主预设作为**共享只读**条目：所有人可见可用，普通用户只能克隆，管理员可维护。
 - **改密码 / 禁用用户 → 立刻踢掉该用户所有会话**（`sessions` 按 user_id 删除）。
 
 会话归属：
@@ -549,12 +573,20 @@ GET /api/conversations?tag=重要               // 按标签
   就能把别人的历史当上下文送进模型。
 - 「清空全部会话」在多用户模式下只清自己的。
 
-无主会话（`user_id IS NULL`）：
+无主数据（`user_id IS NULL`）：
 
 从单用户升级上来时老会话没有归属。`setup` 会把它们**自动认领给第一个管理员**；
 如果后来又出现了无主会话（比如中途关过 `MULTI_USER`），管理员可调
 `POST /api/conversations/claim-orphans`。严格归属校验意味着无主会话默认对谁都不可见——
 **宁可看不见，也不越权**，启动日志会提示存在多少条。
+
+**文件夹与知识库一起认领**：老会话的 `folder_id` 若指向一个无主文件夹，只认领会话
+会出现「会话在、目录没了」；老知识库同理。所以 `setup` 与 `claim-orphans` 会同时
+认领这两类数据，响应里分别返回 `claimedFolders` / `claimedWorkspaces`。
+
+**删除用户是彻底清理**：会话（含消息）、文件夹、分享、预设、知识库及其文档/切块、
+用量记录、登录态都会删除；待入库/失败文档落在 `uploads/` 下的源文件也会一起清掉，
+避免删人之后磁盘只增不减。
 
 `/api/config` 新增 `authMode: 'single'|'multi'` 与 `needsSetup`，前端据此决定
 进主界面 / 创建管理员页 / 登录页。
@@ -706,14 +738,30 @@ POST /api/chat { ..., "agent": true, "imageGeneration": true }
 - 可重试：`408/409/425/429/5xx` 与 `ECONNRESET/ETIMEDOUT/ECONNREFUSED/EAI_AGAIN`。
 - 尊重上游 `Retry-After`，退避带 20% 抖动。
 - 同一服务商连续失败 `BREAKER_THRESHOLD` 次后熔断 `BREAKER_COOLDOWN_MS`，期间直接返回 503 与剩余秒数。
-- 每个服务商并发上限 `UPSTREAM_CONCURRENCY`，超出排队而不是打爆上游。
+- 每个服务商并发上限 `UPSTREAM_CONCURRENCY`，超出排队而不是打爆上游；等待队列有上限
+  （默认 100 个）。队列满了回 429 `semaphore_queue_full`，等超时回 503 `semaphore_timeout`，
+  客户端断开则立刻把等待者移出队列（499 `client_aborted`），不会攒一批僵尸请求。
 
 ### 5.3 安全
 
 - **SSRF**：自定义 Base URL 只允许 http/https，禁止用户名密码、链路本地与云元数据地址；
   默认允许回环/内网（Ollama 场景），`STRICT_SSRF=1` 可全禁；保存时会做 DNS 解析校验。
+  自定义 MCP 的 HTTP transport 同样在保存与连接时各校验一次，请求 `redirect: 'manual'`，
+  遇到 3xx 直接报错，避免被重定向到内网。
 - **鉴权**：设置 `FLYCHAT_ACCESS_TOKEN` 后，除 `/api/health`、`/api/config`、`/api/metrics` 外都需要令牌（定长比较）。
-- **限流**：写操作按 IP 滑动窗口限流（`RATE_MAX` / `RATE_WINDOW_MS`）。
+  多用户模式下服务商探测（`/api/providers/:id/test`、`/remote-models`）只允许管理员，
+  避免普通账号借服务端网络打内网。
+- **Host 白名单**：所有请求校验 `Host` 头，仅放行 localhost、IP 字面量与
+  `TRUSTED_HOSTS` / `CORS_ORIGINS` 中的域名，防 DNS 重绑定；域名部署必须配置 `TRUSTED_HOSTS`。
+- **限流**：写操作按 IP 滑动窗口限流（`RATE_MAX` / `RATE_WINDOW_MS`）；登录失败按
+  「IP + 用户名」计数锁定（10 次 / 10 分钟），同一出口 NAT 下别人不受牵连；
+  失败表设 2000 条上限并优先清理过期项，防止来源 IP 不可控时内存只涨不消。
+  重读接口（`/api/export`、`/api/conversations/:id/export`）单独按
+  `EXPORT_RATE_MAX` / `EXPORT_WINDOW_MS` 限流：一次导出就要把全部会话读进内存，
+  反复请求是低成本 DoS，但普通 GET 不参与这份额度，轮询/浏览不受影响。
+- **请求体上限**：会话消息写入限制条数（默认 200 条）与单条长度（默认 20 万字符），
+  超限回 400 而不是等 SQLite 写爆。
+- **错误暴露**：4xx 回可读原因，5xx 一律回「服务器内部错误」，不把原生异常堆栈/路径带出去。
 - **脱敏**：日志里 `apiKey/authorization/token/secret/password/cookie` 一律 `[redacted]`。
 - **原子写**：配置文件先写临时文件再 rename，损坏文件自动留档。
 
@@ -742,10 +790,16 @@ npm start              # 同时提供前端静态文件与 /api
 ```bash
 FLYCHAT_ACCESS_TOKEN=<随机长字符串> \
 CORS_ORIGINS=https://chat.example.com \
+TRUSTED_HOSTS=chat.example.com \
 TRUST_PROXY=1 \
 LOG_FORMAT=json \
 npm start
 ```
+
+`TRUSTED_HOSTS` 用于防 DNS 重绑定：只信任 IP 字面量、localhost 与白名单里的域名。
+用域名/反代访问时必须填实际域名，否则请求会返回 403 `host_not_allowed`。
+`COOKIE_SECURE=auto`（默认）跟随请求协议决定登录 cookie 是否带 Secure；
+反代终止 HTTPS 时要设 `TRUST_PROXY=1` 才能识别 `X-Forwarded-Proto`，也可显式设 `on`/`off`。
 
 ### nginx 反代要点
 
@@ -799,10 +853,15 @@ npx tsc -b --pretty false    # 前端类型检查（strict + noUnusedLocals/Para
 
 ## 8. 已知限制
 
-- **前端仍以 IndexedDB 为主存储**，服务端 SQLite 是同步副本：跨设备一致性是「最后写入胜出」，
-  同步失败不会阻塞聊天、也不会自动重试。换设备或清浏览器数据前先用 `GET /api/export` 全量导出。
-- **预设是实例级共享资源**：`presets` 表没有 `user_id`，多用户模式下任何登录用户都能改/删他人的预设
-  （与会话、文件夹、分享、用量、知识库工作区的按用户隔离不一致）。预设指向他人知识库时检索层会拦住，不会泄漏内容。
+- **前端仍以 IndexedDB 为主存储**，服务端 SQLite 是同步副本：跨设备一致性是「最后写入胜出」。
+  同步失败不阻塞聊天，`src/lib/serverSync.ts` 会按会话去重、保留最新快照并按指数退避重试
+  （网络恢复/页面重新可见时立即冲刷；4xx 视为终态不重试）。待办 id 按存储作用域
+  （单用户 / 每个账号）写入 localStorage，刷新后自动补发；切换账号只清空内存队列，
+  不会把上一个账号的待办带着新 cookie 发出去。清空全部会话会先取消待办并等在途请求
+  落地再清服务端，撤销删除也会先等删除落地再重新上传，避免任务顺序颠倒后把会话写回去。
+  换设备或清浏览器数据前仍建议先用 `GET /api/export` 全量导出。
+- **老预设没有归属**：升级前创建的预设 `user_id` 为 NULL，作为共享只读条目对全员可见，
+  只有管理员能改/删；普通用户克隆一份后即可编辑。新预设已按用户隔离。
 - **知识库检索是内存打分**：`rag/store.js` 把工作区的全部切块读出来算分（没有 ANN 索引），
   切块上万后延迟会明显上升；按文档过滤时下推到了 SQL。
 - **限流是进程内存态**：单进程部署够用，重启清零，多副本之间不共享。

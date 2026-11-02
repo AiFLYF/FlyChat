@@ -4,6 +4,9 @@ server/.env
 server/.env.local
 # 网页上配置的自定义服务商（含 API Key），不入库
 server/data
+# 本地生产模式试运行的数据目录 / 构建验证产物：含真实 SQLite 库，绝不能入库
+.tmp-prod-data/
+dist-verify/
 .tmp
 *.log
 *.tsbuildinfo

@@ -186,6 +186,7 @@ npm run dev                        # 终端 2：前后端
 
 把「模型 + 参数 + 系统提示词 + 知识库 + MCP」打包成可复用条目，前端一键切换；
 在 `/v1` 里以 `preset:<id>` 的形式暴露成模型名，第三方客户端可以直接选用。
+多用户模式下预设按用户隔离；升级前没有归属的老预设作为共享只读条目，普通用户可克隆后编辑。
 
 ### 分享
 
@@ -245,8 +246,11 @@ npm run dev                        # 终端 2：前后端
 | `FLYCHAT_ACCESS_TOKEN` | 单用户模式的访问令牌；暴露公网时**必须**设置 |
 | `MULTI_USER` / `SESSION_DAYS` | 开启多用户注册登录与按用户隔离；登录态有效期（天） |
 | `CORS_ORIGINS` / `TRUST_PROXY` | 允许的前端来源；部署在 nginx/Cloudflare 后设为 1 才能拿到真实 IP（限流依赖） |
+| `RATE_MAX` / `RATE_WINDOW_MS` | 写接口限流额度（默认 240 次/60 秒）；`EXPORT_RATE_MAX` / `EXPORT_WINDOW_MS` 单独管全量导出类重读接口（默认 20 次/分） |
+| `TRUSTED_HOSTS` / `COOKIE_SECURE` | 域名部署时填实际域名（防 DNS 重绑定）；登录 cookie 的 Secure 策略 `auto`/`on`/`off`（默认跟随请求协议） |
 | `TAVILY_API_KEY` / `BRAVE_API_KEY` / `SERPER_API_KEY` / `SEARXNG_URL` | 联网搜索后端，配了任意一个前端才出现「联网搜索」开关 |
 | `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` | 知识库向量化用的服务商与模型（需要一个支持 `/embeddings` 的 OpenAI 兼容服务商） |
+| `RAG_MAX_DOCS` / `RAG_MAX_MB` | 单个工作区的文档数（默认 500）与源文件合计大小（默认 512MB，0 = 不限）上限 |
 | `FALLBACK_MODELS` | 降级链，例：`deepseek:deepseek-chat,openai:gpt-4o-mini` |
 | `CONTEXT_BUDGET` / `CONTEXT_COMPACT` / `SUMMARY_MODEL` | 上下文裁剪与摘要压缩开关及所用小模型 |
 | `TITLE_MODEL` / `SUGGEST_MODEL` | 标题、追问建议等小任务的专用模型（不配会自动挑便宜的） |
@@ -262,7 +266,8 @@ npm run dev                        # 终端 2：前后端
 1. 设置 `FLYCHAT_ACCESS_TOKEN`，或开启 `MULTI_USER` 并创建管理员；
 2. `HOST` 保持 127.0.0.1，由 nginx / caddy 反代并负责 HTTPS（SSE 需要 `proxy_buffering off`，
    配置片段见 [docs/BACKEND.md](docs/BACKEND.md#nginx-反代要点)）；
-3. 设置 `CORS_ORIGINS` 为实际前端域名，`TRUST_PROXY=1`；
+3. 设置 `CORS_ORIGINS` 为实际前端域名、`TRUSTED_HOSTS` 为实际访问域名（如 `chat.example.com`），
+   `TRUST_PROXY=1`；用 IP 直接访问时不需要 `TRUSTED_HOSTS`；
 4. 纯公网部署可加 `STRICT_SSRF=1`，禁止自定义服务商与知识库入库指向内网；
 5. 用 `GET /api/budget` 设置成本硬上限，避免 Key 被刷爆。
 
@@ -377,7 +382,7 @@ flyweb/
 ```bash
 npx tsc -b --pretty false   # 类型检查（strict，开了 noUnusedLocals/Parameters）
 npm run build               # 构建前端
-npm test                    # 后端 264 项测试，自带假上游，不需要真 Key、不产生费用
+npm test                    # 后端 348 项测试，自带假上游，不需要真 Key、不产生费用
 npm run smoke:api           # 对运行中的服务做接口冒烟（默认 127.0.0.1:3001）
 npm run smoke               # Playwright UI 冒烟：越界 / 顶栏高度 / 动画 / 键盘可达 / reduced-motion
 npm run test:e2e            # 端到端套件（需要本机 Chrome）
@@ -397,9 +402,14 @@ OpenAI 兼容网关、数据库迁移。加新适配器时，先在 `server/test
   保存时做 SSRF 校验（协议、凭据、云元数据地址、字面量 IP、DNS 解析结果），Agent 抓取网页时**逐跳**再校验一次并默认拒绝内网；
 - **鉴权**：单用户模式支持 `FLYCHAT_ACCESS_TOKEN`（timing-safe 比较）；多用户模式是 scrypt 密码 +
   HttpOnly SameSite 会话 cookie（库里只存 sha256）+ PAT；
-- **限流**：写接口有内存态限流（默认 240 次/分），部署在反代后需 `TRUST_PROXY=1` 才能按真实 IP 限；
+- **限流**：写接口有内存态限流（默认 240 次/分）；`/api/export` 与单会话导出这类要把全部数据读进内存的
+  重读接口另有独立额度（默认 20 次/分），普通 GET 不受影响；部署在反代后需 `TRUST_PROXY=1` 才能按真实 IP 限；
+- **知识库配额**：单个工作区默认最多 500 篇、源文件合计 512MB（`RAG_MAX_DOCS` / `RAG_MAX_MB` 可调，0 = 不限），
+  超限返回 413；`documents.size` 以服务端落盘实测字节为准，不信任客户端上报值；
 - **响应头**：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、
   同源 `Cross-Origin-Resource-Policy`；CORS 只放行同源、localhost 与 `CORS_ORIGINS` 白名单；
+- **Host 白名单**：只信任 IP 字面量、localhost 与 `TRUSTED_HOSTS`/`CORS_ORIGINS` 里的域名，
+  防止攻击者域名解析到 127.0.0.1 后借浏览器读写本机数据（DNS 重绑定）；
 - **分享**：快照链接可设密码与有效期，密码不出现在 URL；公开读取接口只回快照内容；
 - **存储降级**：拿不到 SQLite 时相关接口返回 503 并说明原因，聊天功能不受影响。
 
