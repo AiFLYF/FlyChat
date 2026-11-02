@@ -89,6 +89,21 @@ export function getFolder(id, { userId = null } = {}) {
   return rowToFolder(row)
 }
 
+/**
+ * 单用户升级到多用户时，把没有归属的历史文件夹认领给第一个管理员。
+ * 会话已经在认领范围内，但 `folder_id` 指向的文件夹若还无主，侧栏就看不到它们。
+ */
+export function claimOwnerlessFolders(userId) {
+  if (!userId) return 0
+  try {
+    return getDb()
+      .prepare('UPDATE folders SET user_id = ? WHERE user_id IS NULL')
+      .run(String(userId)).changes
+  } catch {
+    return 0
+  }
+}
+
 export function createFolder({ name, icon, sortIndex } = {}, { userId = null } = {}) {
   const db = getDb()
   const id = `folder-${crypto.randomBytes(6).toString('hex')}`

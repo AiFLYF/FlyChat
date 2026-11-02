@@ -1,4 +1,5 @@
 import { getDb, transaction } from './db.js'
+import { cleanTags, getFolder } from './folders.js'
 import { badRequest, conflict, notFound } from '../lib/errors.js'
 
 /**
@@ -79,6 +80,15 @@ function cleanTitle(title) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, MAX_TITLE)
+}
+
+/**
+ * 同步请求可能带着「已删除 / 别人的」文件夹 id 过来。
+ * 落成未分类即可，不能让整次会话同步失败——否则一条脏引用会让这条会话永远存不上服务端。
+ */
+function cleanFolderId(folderId, userId) {
+  if (!folderId) return null
+  return getFolder(folderId, { userId }) ? String(folderId) : null
 }
 
 /**
@@ -282,13 +292,14 @@ export function upsertConversation(input = {}) {
     }
     // 前端是「整条会话 POST 上来」的同步方式，所以更新时也要落消息，
     // 否则第二次同步开始消息就永远不更新了（这是真实踩过的坑）
-    updateConversation(id, input)
+    updateConversation(id, input, { userId: input.userId || null })
     if (Array.isArray(input.messages) && input.messages.length) {
       saveMessages(id, input.messages, { replace: true })
     }
     return getConversation(id)
   }
 
+  const tags = cleanTags(input.tags)
   db.prepare(
     `INSERT INTO conversations (id, title, summary, pinned, sort_index, using_context, assistant_id, model, created_at, updated_at, leaf_message_id, user_id, folder_id, tags)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -305,8 +316,8 @@ export function upsertConversation(input = {}) {
     Number(input.updatedAt) || now,
     input.leafMessageId ? String(input.leafMessageId) : null,
     input.userId ? String(input.userId) : null,
-    input.folderId ? String(input.folderId) : null,
-    Array.isArray(input.tags) && input.tags.length ? JSON.stringify(input.tags) : null
+    cleanFolderId(input.folderId, input.userId),
+    tags.length ? JSON.stringify(tags) : null
   )
 
   if (Array.isArray(input.messages) && input.messages.length) {
@@ -361,12 +372,13 @@ export function updateConversation(id, patch = {}, { userId = null } = {}) {
   }
   if (patch.folderId !== undefined) {
     sets.push('folder_id = ?')
-    params.push(patch.folderId ? String(patch.folderId) : null)
+    params.push(cleanFolderId(patch.folderId, userId))
   }
   if (patch.tags !== undefined) {
     // 空数组存 null 而不是 "[]"，这样列表里的 `tags LIKE` 过滤不会误命中
+    const tags = cleanTags(patch.tags)
     sets.push('tags = ?')
-    params.push(Array.isArray(patch.tags) && patch.tags.length ? JSON.stringify(patch.tags) : null)
+    params.push(tags.length ? JSON.stringify(tags) : null)
   }
   if (patch.leafMessageId !== undefined) {
     sets.push('leaf_message_id = ?')

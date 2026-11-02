@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { badRequest, notFound, unavailable } from '../lib/errors.js'
+import { config } from '../config.js'
 import { storageStatus } from '../store/db.js'
 import {
   deleteAllConversations,
@@ -14,7 +15,8 @@ import {
 import { inc } from '../lib/metrics.js'
 import { currentUserId, requireAdmin } from '../lib/auth.js'
 import { claimOwnerlessConversations } from '../store/users.js'
-import { cleanTags, getFolder } from '../store/folders.js'
+import { claimOwnerlessFolders, cleanTags, getFolder } from '../store/folders.js'
+import { claimOwnerlessWorkspaces } from '../rag/store.js'
 
 const router = Router()
 
@@ -101,6 +103,17 @@ router.delete('/conversations', (req, res, next) => {
 router.put('/conversations/:id/messages', (req, res, next) => {
   const { messages, replace } = req.body || {}
   if (!Array.isArray(messages)) return next(badRequest('messages 必须是数组', 'invalid_messages'))
+  // 和 /api/chat 用同一套上限：32MB 请求体里塞几万条消息会在一个同步事务里
+  // 阻塞事件循环，也让会话体积无界增长
+  if (messages.length > config.limits.messages) {
+    return next(badRequest(`messages 条数过多（上限 ${config.limits.messages}）`, 'too_many_messages'))
+  }
+  const oversized = messages.find(
+    (m) => typeof m?.content === 'string' && m.content.length > config.limits.messageChars
+  )
+  if (oversized) {
+    return next(badRequest(`单条消息内容过长（上限 ${config.limits.messageChars} 字符）`, 'message_too_long'))
+  }
   // 先确认会话存在且属于自己，否则等于给了「往别人会话里塞消息」的口子
   const userId = currentUserId(req)
   if (userId && !getConversation(req.params.id, { userId })) return next(notFound('会话不存在'))
@@ -203,7 +216,15 @@ router.post('/import', (req, res, next) => {
  */
 router.post('/conversations/claim-orphans', requireAdmin, (req, res) => {
   const claimed = claimOwnerlessConversations(req.user.id)
-  res.json({ ok: true, claimed })
+  // 文件夹与知识库也有同样的历史数据；只认领会话会让侧栏目录和知识库「看着还在、其实没了」
+  const claimedFolders = claimOwnerlessFolders(req.user.id)
+  let claimedWorkspaces = 0
+  try {
+    claimedWorkspaces = claimOwnerlessWorkspaces(req.user.id)
+  } catch {
+    // 知识库表不可用时不影响会话认领
+  }
+  res.json({ ok: true, claimed, claimedFolders, claimedWorkspaces })
 })
 
 export default router

@@ -82,6 +82,8 @@ router.put('/providers/:id/models', requireAdmin, (req, res, next) => {
 /** 连通性自检：避免配错了地址/密钥却要到发消息时才发现 */
 router.post(
   '/providers/:id/test',
+  // 会带着实例密钥去请求上游：普通用户不能借它探测内网/读取回显
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const provider = resolveProvider(req.params.id)
     if (!provider) throw notFound('服务商不存在或未配置')
@@ -139,6 +141,7 @@ router.post(
 /** 拉取上游模型清单，让用户勾选而不是手打模型名 */
 router.get(
   '/providers/:id/remote-models',
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const provider = resolveProvider(req.params.id)
     if (!provider) throw notFound('服务商不存在或未配置')

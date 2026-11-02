@@ -152,6 +152,7 @@ CREATE TABLE IF NOT EXISTS presets (
   workspace_id  TEXT,
   mcp_servers   TEXT,
   sort_index    INTEGER,
+  user_id       TEXT,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
 );
@@ -250,6 +251,8 @@ export function migrateSchema(database) {
   ensureColumn('shares', 'user_id', 'TEXT')
   // 知识库归属：多用户模式下 workspace 必须按用户隔离
   ensureColumn('workspaces', 'user_id', 'TEXT')
+  // 预设归属：多用户模式下新建的预设按用户隔离；老数据为 NULL，按共享预设只读处理
+  ensureColumn('presets', 'user_id', 'TEXT')
   // 用量来源：chat / image / audio / search。
   // 图片与语音按次计费、没有 token，混在一起统计时分不清钱花在哪。
   ensureColumn('usage_events', 'kind', "TEXT NOT NULL DEFAULT 'chat'")
@@ -262,6 +265,7 @@ export function migrateSchema(database) {
   ensureIndex('CREATE INDEX IF NOT EXISTS idx_conv_folder ON conversations(folder_id)', 'conversations')
   ensureIndex('CREATE INDEX IF NOT EXISTS idx_folder_user ON folders(user_id)', 'folders')
   ensureIndex('CREATE INDEX IF NOT EXISTS idx_ws_user ON workspaces(user_id)', 'workspaces')
+  ensureIndex('CREATE INDEX IF NOT EXISTS idx_preset_user ON presets(user_id)', 'presets')
   ensureIndex('CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_events(user_id, created_at DESC)', 'usage_events')
 }
 

@@ -103,10 +103,7 @@ router.post('/documents', requireStorage, (req, res, next) => {
   }
 
   try {
-    const result = submitDocument(
-      { workspaceId, name, mime, dataUrl, text, url, size: req.body?.size },
-      { userId }
-    )
+    const result = submitDocument({ workspaceId, name, mime, dataUrl, text, url }, { userId })
     if (result.duplicate) {
       inc('document_ingested_total', { duplicate: 'true' })
       return res.status(200).json({ ok: true, ...result })
@@ -123,6 +120,8 @@ router.post('/documents', requireStorage, (req, res, next) => {
       queueLength: pendingCount(),
     })
   } catch (err) {
+    // 配额是 413 + 专属 code，原样透传；其它提交错误保持 400
+    if (Number.isInteger(err?.status) && err?.code) return next(err)
     next(badRequest(err?.message || '提交失败', 'submit_failed'))
   }
 })

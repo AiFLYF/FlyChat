@@ -1,11 +1,60 @@
 import { Router } from 'express'
-import { asyncHandler, badRequest, unavailable } from '../lib/errors.js'
+import { AppError, asyncHandler, unavailable } from '../lib/errors.js'
 import { storageStatus } from '../store/db.js'
 import { createShare, deleteShare, listShares, readShare } from '../store/shares.js'
 import { currentUserId } from '../lib/auth.js'
 import { inc } from '../lib/metrics.js'
 
 const router = Router()
+
+/**
+ * 公开分享页的密码尝试限流。
+ *
+ * 分享 id 是公开可枚举的（链接本身要发给别人），密码校验又是高成本的 scrypt；
+ * 没有限流时，一个脚本就能把「猜密码」和「拖慢事件循环」同时做了。
+ * 按 IP + 分享 id 计数，成功一次即清零，避免误伤正常用户。
+ */
+const passwordFailures = new Map()
+const MAX_PASSWORD_FAILURES = 8
+const PASSWORD_LOCKOUT_MS = 10 * 60 * 1000
+const PASSWORD_FAILURE_CAP = 2000
+
+function passwordKey(req) {
+  return `${req.ip || 'unknown'}:${req.params.id}`
+}
+
+function checkPasswordLockout(key) {
+  const record = passwordFailures.get(key)
+  if (!record) return
+  if (Date.now() - record.firstFailedAt > PASSWORD_LOCKOUT_MS) {
+    passwordFailures.delete(key)
+    return
+  }
+  if (record.count >= MAX_PASSWORD_FAILURES) {
+    const remainingSec = Math.ceil((PASSWORD_LOCKOUT_MS - (Date.now() - record.firstFailedAt)) / 1000)
+    throw new AppError(`密码尝试次数过多，请在 ${remainingSec} 秒后再试`, {
+      status: 429,
+      code: 'share_locked_out',
+    })
+  }
+}
+
+function recordPasswordFailure(key) {
+  const now = Date.now()
+  const record = passwordFailures.get(key)
+  if (!record || now - record.firstFailedAt > PASSWORD_LOCKOUT_MS) {
+    // 大量随机 id 不能把内存撑爆：过期项优先清，仍然超限就整表丢弃（只是重置计数）
+    if (passwordFailures.size >= PASSWORD_FAILURE_CAP) {
+      for (const [k, v] of passwordFailures) {
+        if (now - v.firstFailedAt > PASSWORD_LOCKOUT_MS) passwordFailures.delete(k)
+      }
+      if (passwordFailures.size >= PASSWORD_FAILURE_CAP) passwordFailures.clear()
+    }
+    passwordFailures.set(key, { count: 1, firstFailedAt: now })
+  } else {
+    record.count += 1
+  }
+}
 
 /** 存储不可用时给明确原因（作为中间件使用，必须调 next 或抛错） */
 const requireStorage = (req, _res, next) => {
@@ -36,8 +85,17 @@ router.get(
   '/share/:id',
   requireStorage,
   asyncHandler(async (req, res) => {
+    const key = passwordKey(req)
+    checkPasswordLockout(key)
     const password = req.query.password || req.get('x-share-password') || ''
-    const data = readShare(req.params.id, password)
+    let data
+    try {
+      data = readShare(req.params.id, password)
+    } catch (err) {
+      if (err?.status === 401) recordPasswordFailure(key)
+      throw err
+    }
+    passwordFailures.delete(key)
     // 分享页是公开内容，允许被任意站点嵌入/抓取
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin')
     res.json(data)

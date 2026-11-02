@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { getDb, transaction } from './db.js'
 import { badRequest, notFound } from '../lib/errors.js'
+import { removeUpload } from '../rag/jobs.js'
 
 /**
  * 用户与密码。
@@ -156,6 +157,8 @@ export function updateUser(id, patch = {}) {
   if (patch.password !== undefined) {
     sets.push('password_hash = ?')
     params.push(hashPassword(cleanPassword(patch.password)))
+    // 管理员重置密码同样意味着「旧凭证全部作废」，长期 PAT 也不能例外
+    sets.push('api_token_hash = NULL')
   }
 
   if (sets.length === 0) return existing
@@ -189,6 +192,13 @@ export function deleteUser(id) {
     .prepare('SELECT id FROM workspaces WHERE user_id = ?')
     .all(userId)
     .map((row) => row.id)
+  // 待入库/失败文档的源文件在 uploads 下，删库不会带走它们；先记下，事务提交后再清理
+  const docIds = db
+    .prepare(
+      `SELECT d.id FROM documents d JOIN workspaces w ON w.id = d.workspace_id WHERE w.user_id = ?`
+    )
+    .all(userId)
+    .map((row) => row.id)
 
   transaction((tx) => {
     tx.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId)
@@ -203,10 +213,13 @@ export function deleteUser(id) {
     }
     tx.prepare('DELETE FROM shares WHERE user_id = ?').run(userId)
     tx.prepare('DELETE FROM folders WHERE user_id = ?').run(userId)
+    // 预设从第四轮起带归属；用户删掉后这些行对谁都不可见，留着只会占库
+    tx.prepare('DELETE FROM presets WHERE user_id = ?').run(userId)
     // 用量记录也带归属：留着会变成无法解释的「幽灵账单」
     tx.prepare('DELETE FROM usage_events WHERE user_id = ?').run(userId)
     tx.prepare('DELETE FROM users WHERE id = ?').run(userId)
   })
+  for (const docId of docIds) removeUpload(docId)
   return true
 }
 
@@ -232,7 +245,11 @@ export function changePassword(id, oldPassword, newPassword) {
     throw badRequest('原密码不正确', 'wrong_password')
   }
   const pwd = cleanPassword(newPassword)
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(pwd), String(id))
+  // PAT 是长期凭证，改密码时必须一起作废，否则「所有设备下线」只对浏览器生效
+  db.prepare('UPDATE users SET password_hash = ?, api_token_hash = NULL WHERE id = ?').run(
+    hashPassword(pwd),
+    String(id)
+  )
   // 改密码等于「所有设备下线」：不踢会话的话，别人偷到的旧 cookie 还能继续用
   revokeUserSessions(id)
   return true

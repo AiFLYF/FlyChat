@@ -10,7 +10,7 @@ import { estimateMessagesTokens, estimateTokens } from '../lib/tokens.js'
 import { checkBudget } from '../store/budget.js'
 import { getPreset, listPresets } from '../store/presets.js'
 import { parseModelRef } from '../lib/preset.js'
-import { currentUserId } from '../lib/auth.js'
+import { currentUserId, isAdmin } from '../lib/auth.js'
 
 /**
  * OpenAI 兼容 API。
@@ -76,6 +76,54 @@ function resolveTarget(model) {
   })
 }
 
+/**
+ * OpenAI 工具定义（`{type:'function', function:{...}}`）→ 适配器内部的扁平结构。
+ *
+ * 不转换的话，openai-compat/anthropic/gemini 三个适配器都按 `t.name` 取值，
+ * 拿到的是 `undefined`，上游会收到一个没有名字的工具（多数直接 400）。
+ */
+function normalizeTools(tools) {
+  if (!Array.isArray(tools)) return undefined
+  return tools
+    .map((tool) => {
+      if (!tool || typeof tool !== 'object') return null
+      const fn = tool.type === 'function' && tool.function ? tool.function : tool
+      const name = String(fn?.name || '').trim()
+      if (!name) return null
+      return {
+        name,
+        description: fn.description ? String(fn.description) : undefined,
+        parameters:
+          fn.parameters && typeof fn.parameters === 'object'
+            ? fn.parameters
+            : { type: 'object', properties: {} },
+      }
+    })
+    .filter(Boolean)
+}
+
+/**
+ * OpenAI 消息里的 tool_calls（`{id, type, function:{name, arguments}}`）→ 内部结构。
+ * 历史轮次必须能还原工具名和参数，否则模型看不到自己上一轮到底调了什么。
+ */
+function normalizeToolCalls(calls) {
+  return calls
+    .map((call) => {
+      if (!call || typeof call !== 'object') return null
+      const fn = call.function && typeof call.function === 'object' ? call.function : call
+      const name = String(fn?.name || '').trim()
+      if (!name) return null
+      const args = fn.arguments
+      return {
+        id: call.id ? String(call.id) : `call_${crypto.randomBytes(6).toString('hex')}`,
+        name,
+        // 内部适配器统一按字符串协议转发，对象参数先序列化
+        arguments: typeof args === 'string' ? args : JSON.stringify(args || {}),
+      }
+    })
+    .filter(Boolean)
+}
+
 /** 内部消息 → 上游消息（只保留 OpenAI 认识的字段） */
 function normalizeMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -91,7 +139,9 @@ function normalizeMessages(messages) {
     const out = { role, content }
     if (m.name) out.name = String(m.name)
     if (m.tool_call_id) out.tool_call_id = String(m.tool_call_id)
-    if (Array.isArray(m.tool_calls)) out.tool_calls = m.tool_calls
+    if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+      out.tool_calls = normalizeToolCalls(m.tool_calls)
+    }
     return out
   })
 }
@@ -145,7 +195,7 @@ async function complete({ provider, model, messages, temperature, topP, maxToken
  * 预设也作为「模型」暴露（`preset:<id>`）——这样第三方客户端里
  * 能直接选「我的代码助手」而不是某个裸模型名，预设里的系统提示与参数会一起生效。
  */
-router.get('/models', (_req, res) => {
+router.get('/models', (req, res) => {
   const created = Math.floor(Date.now() / 1000)
   const data = []
   for (const p of configuredProviders()) {
@@ -156,7 +206,7 @@ router.get('/models', (_req, res) => {
     }
   }
   try {
-    for (const preset of listPresets()) {
+    for (const preset of listPresets({ userId: currentUserId(req), isAdmin: isAdmin(req) })) {
       data.push({
         id: `preset:${preset.id}`,
         object: 'model',
@@ -176,7 +226,9 @@ router.post(
   asyncHandler(async (req, res) => {
     const body = req.body || {}
     let { temperature, top_p: topP, max_tokens: maxTokens } = body
-    const { stream = false, tools, tool_choice: toolChoice } = body
+    const { stream = false, tool_choice: toolChoice } = body
+    // 调用方按 OpenAI 协议传的是 {type:'function', function:{...}}，适配器不认识这层包装
+    const tools = normalizeTools(body.tools)
     let messages = normalizeMessages(body.messages)
 
     // —— 预设：`model: "preset:<id>"` 时，模型/参数/系统提示都按预设来 ——
@@ -184,7 +236,10 @@ router.post(
     const ref = parseModelRef(body.model)
     let preset = null
     if (ref.presetId) {
-      preset = getPreset(ref.presetId)
+      preset = getPreset(ref.presetId, {
+        userId: currentUserId(req),
+        isAdmin: isAdmin(req),
+      })
       if (!preset) {
         throw new AppError(`预设 "${ref.presetId}" 不存在`, { status: 404, code: 'preset_not_found' })
       }

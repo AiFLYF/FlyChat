@@ -24,7 +24,7 @@ import { recordUsage } from '../store/usage.js'
 import { getPreset } from '../store/presets.js'
 import { applyPreset } from '../lib/preset.js'
 import { runTask } from '../lib/tasks.js'
-import { currentUserId } from '../lib/auth.js'
+import { currentUserId, isAdmin } from '../lib/auth.js'
 
 const router = Router()
 
@@ -101,7 +101,10 @@ router.post('/chat', async (req, res, next) => {
     if (!storageStatus().available) {
       return next(new AppError('服务端持久化不可用，预设功能不可用', { status: 503, code: 'storage_unavailable' }))
     }
-    preset = getPreset(body.presetId)
+    preset = getPreset(body.presetId, {
+      userId: currentUserId(req),
+      isAdmin: isAdmin(req),
+    })
     if (!preset) {
       return next(new AppError(`预设 "${body.presetId}" 不存在`, { status: 404, code: 'preset_not_found' }))
     }
@@ -156,24 +159,29 @@ router.post('/chat', async (req, res, next) => {
   const safeTemperature = clampNum(temperature, 0, 2, 0.7)
   const safeTopP = clampNum(topP, 0, 1, 1)
 
-  const plan = config.context.budgetEnabled
-    ? planContext({
-        system: system || '',
-        messages: contextMessages,
-        contextWindow: info.contextWindow,
-        maxOutput: safeMaxTokens,
-        minKeepMessages: config.context.minKeepMessages,
-        middleOutKeep: config.context.middleOutKeep,
-      })
-    : {
-        messages,
-        system: system || '',
-        trimmed: false,
-        dropped: 0,
-        truncated: 0,
-        estimatedInputTokens: estimateMessagesTokens(messages),
-        budget: info.contextWindow - safeMaxTokens,
-      }
+  let plan
+  try {
+    plan = config.context.budgetEnabled
+      ? planContext({
+          system: system || '',
+          messages: contextMessages,
+          contextWindow: info.contextWindow,
+          maxOutput: safeMaxTokens,
+          minKeepMessages: config.context.minKeepMessages,
+          middleOutKeep: config.context.middleOutKeep,
+        })
+      : {
+          messages: contextMessages,
+          system: system || '',
+          trimmed: false,
+          dropped: 0,
+          truncated: 0,
+          estimatedInputTokens: estimateMessagesTokens(contextMessages) + estimateTokens(system),
+          budget: info.contextWindow - safeMaxTokens,
+        }
+  } catch (err) {
+    return next(err)
+  }
 
   // —— 成本硬上限：超支前直接拒绝，而不是事后统计 ——
   const budgetCheck = checkBudget()
@@ -242,7 +250,7 @@ router.post('/chat', async (req, res, next) => {
     stream.close()
   }
 
-  stream.send({
+  const sendMeta = (extra = {}) => stream.send({
     type: 'meta',
     requestId: req.id,
     provider: provider.id,
@@ -263,21 +271,49 @@ router.post('/chat', async (req, res, next) => {
       dropped: plan.dropped,
       truncated: plan.truncated,
     },
+    ...extra,
   })
+  sendMeta()
 
   if (budgetCheck.warn) {
     stream.send({ type: 'notice', message: budgetCheck.warn })
   }
 
   if (plan.trimmed) {
+    const actions = []
+    if (plan.dropped > 0) actions.push(`省略最早的 ${plan.dropped} 条消息`)
+    if (plan.truncated > 0) actions.push('压缩了部分过长内容')
     stream.send({
       type: 'notice',
-      message: `对话历史较长，已自动省略最早的 ${plan.dropped} 条消息以适配 ${info.contextWindow.toLocaleString()} token 上下文`,
+      message: `对话历史较长，已${actions.length ? actions.join('、') : '压缩上下文'}，以适配 ${info.contextWindow.toLocaleString()} token 上下文`,
     })
   }
 
   try {
     let finalSystem = plan.system
+    const fitFinalContext = (tools = []) => {
+      if (!config.context.budgetEnabled || (finalSystem === plan.system && tools.length === 0)) return
+      const toolTokens = tools.length ? estimateTokens(JSON.stringify(tools)) : 0
+      const fitted = planContext({
+        system: finalSystem,
+        messages: plan.messages,
+        contextWindow: info.contextWindow,
+        maxOutput: safeMaxTokens + toolTokens,
+        minKeepMessages: config.context.minKeepMessages,
+        middleOutKeep: config.context.middleOutKeep,
+      })
+      finalSystem = fitted.system
+      plan = {
+        ...fitted,
+        trimmed: plan.trimmed || fitted.trimmed,
+        dropped: plan.dropped + fitted.dropped,
+        truncated: plan.truncated + fitted.truncated,
+        estimatedInputTokens: fitted.estimatedInputTokens + toolTokens,
+        budget: fitted.budget + toolTokens,
+      }
+      sendMeta()
+      if (fitted.trimmed) stream.send({ type: 'notice', message: '补充上下文较长，已按模型窗口压缩历史、检索内容或系统提示词' })
+    }
 
     if (think) {
       finalSystem = [
@@ -286,6 +322,62 @@ router.post('/chat', async (req, res, next) => {
       ]
         .filter(Boolean)
         .join('\n\n')
+    }
+
+    /**
+     * 工具解析是纯同步的，先算出来；MCP 装载与历史摘要则和知识库检索并行启动。
+     * 之前「检索 → 摘要 → MCP」逐段 await，用户同时开了知识库与工具时，
+     * 首 token 要等三段 I/O 依次完成；现在只等最慢的那一段。
+     * 事件与提示的发送顺序保持不变（下面按原顺序 await），只是耗时重叠。
+     */
+    const wantsTools = body.agent === true || body.tools === true || Array.isArray(body.tools)
+    let toolDefs = []
+    const toolNotices = []
+    if (wantsTools) {
+      if (!info.capabilities.tools) {
+        toolNotices.push(`${model} 不支持工具调用，本次按普通对话处理`)
+      } else {
+        const explicitTools = Array.isArray(body.tools) ? body.tools : null
+        toolDefs = resolveTools(explicitTools)
+        /**
+         * 图像生成单独一个开关（`imageGeneration`），不进默认工具集：
+         * 一次出图比一次对话贵得多，不能因为「开了工具」就默默开始花钱。
+         * 显式列在 `tools` 里同样生效，方便预设绑定。
+         */
+        const wantsImage =
+          body.imageGeneration === true ||
+          (explicitTools ? explicitTools.includes('generate_image') : false)
+        if (wantsImage && !toolDefs.some((t) => t.name === 'generate_image')) {
+          toolDefs = [...toolDefs, ...resolveTools(['generate_image'])]
+        }
+        if (toolDefs.length === 0) {
+          toolNotices.push('没有可用的工具，本次按普通对话处理')
+        }
+      }
+    }
+
+    const mcpOnly = Array.isArray(body.mcpServers) ? body.mcpServers : undefined
+    // 连接/列工具可能涉及 spawn 与握手，先启动；失败在下面统一降级
+    const mcpTask =
+      toolDefs.length > 0 && !abort.signal.aborted
+        ? loadMcpTools({ only: mcpOnly })
+            .then((mcp) => ({ mcp }))
+            .catch((err) => ({ err }))
+        : null
+
+    // 摘要只依赖已算好的裁剪结果，同样先启动
+    let compaction = null
+    if (plan.trimmed && plan.dropped > 0 && getContextFlags().compaction && storageStatus().available) {
+      const dropped = contextMessages.slice(0, contextMessages.length - plan.messages.length)
+      if (dropped.length > 0) {
+        compaction = {
+          dropped,
+          promise: summarizeDropped({
+            dropped, provider, signal: abort.signal,
+            scope: { userId: currentUserId(req), conversationId: conversationId || '' },
+          }),
+        }
+      }
     }
 
     // —— 知识库检索：命中则注入上下文并回传来源 ——
@@ -321,55 +413,31 @@ router.post('/chat', async (req, res, next) => {
     }
 
     // —— 摘要式压缩：裁剪掉的历史先用小模型总结，别让助手失忆 ——
-    if (plan.trimmed && plan.dropped > 0 && getContextFlags().compaction && storageStatus().available) {
-      const dropped = contextMessages.slice(0, contextMessages.length - plan.messages.length)
-      if (dropped.length > 0) {
-        const result = await summarizeDropped({ dropped, provider, signal: abort.signal })
-        if (result?.summary) {
-          finalSystem = [finalSystem, wrapSummary(result.summary)].filter(Boolean).join('\n\n')
-          stream.send({
-            type: 'meta',
-            requestId: req.id,
-            compaction: { applied: true, cached: result.cached, summarizedMessages: dropped.length, model: result.model },
-          })
-          stream.send({
-            type: 'notice',
-            message: result.cached
-              ? `已沿用此前生成的摘要（覆盖较早的 ${dropped.length} 条消息）`
-              : `已把较早的 ${dropped.length} 条消息总结为摘要，以适配模型上下文`,
-          })
-        } else if (result?.failed) {
-          const safeErr = String(result.error || '').replace(/sk-[a-zA-Z0-9_\-]{6,}/g, 'sk-***').slice(0, 120)
-          stream.send({ type: 'notice', message: `历史摘要生成失败，已改为直接裁剪${safeErr ? `：${safeErr}` : ''}` })
-        }
+    if (compaction) {
+      const { dropped } = compaction
+      const result = await compaction.promise
+      if (result?.summary) {
+        finalSystem = [finalSystem, wrapSummary(result.summary)].filter(Boolean).join('\n\n')
+        sendMeta({
+          compaction: { applied: true, cached: result.cached, summarizedMessages: dropped.length, model: result.model },
+        })
+        stream.send({
+          type: 'notice',
+          message: result.cached
+            ? `已沿用此前生成的摘要（覆盖较早的 ${dropped.length} 条消息）`
+            : `已把较早的 ${dropped.length} 条消息总结为摘要，以适配模型上下文`,
+        })
+      } else if (result?.failed) {
+        // 原文可能是 "fetch failed" 这种英文底层报错，用户看了不知道该干嘛；
+        // 走统一的错误翻译，密钥形态仍要脱敏
+        const friendly = describeUpstreamError(result.error instanceof Error ? result.error : new Error(String(result.error || '')), {})
+        const safeErr = String(friendly).replace(/sk-[a-zA-Z0-9_\-]{6,}/g, 'sk-***').slice(0, 120)
+        stream.send({ type: 'notice', message: `历史摘要生成失败，已改为直接裁剪${safeErr ? `：${safeErr}` : ''}` })
       }
     }
 
     // —— 工具调用：模型自己决定何时搜/读网页，服务端执行 ——
-    const wantsTools = body.agent === true || body.tools === true || Array.isArray(body.tools)
-    let toolDefs = []
-    if (wantsTools) {
-      if (!info.capabilities.tools) {
-        stream.send({ type: 'notice', message: `${model} 不支持工具调用，本次按普通对话处理` })
-      } else {
-        const explicitTools = Array.isArray(body.tools) ? body.tools : null
-        toolDefs = resolveTools(explicitTools)
-        /**
-         * 图像生成单独一个开关（`imageGeneration`），不进默认工具集：
-         * 一次出图比一次对话贵得多，不能因为「开了工具」就默默开始花钱。
-         * 显式列在 `tools` 里同样生效，方便预设绑定。
-         */
-        const wantsImage =
-          body.imageGeneration === true ||
-          (explicitTools ? explicitTools.includes('generate_image') : false)
-        if (wantsImage && !toolDefs.some((t) => t.name === 'generate_image')) {
-          toolDefs = [...toolDefs, ...resolveTools(['generate_image'])]
-        }
-        if (toolDefs.length === 0) {
-          stream.send({ type: 'notice', message: '没有可用的工具，本次按普通对话处理' })
-        }
-      }
-    }
+    for (const message of toolNotices) stream.send({ type: 'notice', message })
 
     const onFallback = ({ from, to, error }) => {
       usedProviderId = to.provider.id
@@ -392,16 +460,16 @@ router.post('/chat', async (req, res, next) => {
       // 合并 MCP 工具：server 里配了并启用的会一起进 agent 的工具箱。
       // 预设可以用 `mcpMode: 'selected'` 锁定一组 server（对应 LibreChat #7387 的诉求）。
       let mcpIndex = new Map()
-      try {
-        const only = Array.isArray(body.mcpServers) ? body.mcpServers : undefined
-        const mcp = await loadMcpTools({ only })
+      const mcpOutcome = mcpTask ? await mcpTask : null
+      if (mcpOutcome?.err) {
+        log.warn('MCP 工具装载失败，本次忽略', { message: mcpOutcome.err?.message })
+      } else if (mcpOutcome?.mcp) {
+        const mcp = mcpOutcome.mcp
         mcpIndex = mcp.index
         toolDefs = [...toolDefs, ...mcp.definitions]
         if (mcp.definitions.length > 0) {
-          log.info('已挂载 MCP 工具', { count: mcp.definitions.length, limited: !!only })
+          log.info('已挂载 MCP 工具', { count: mcp.definitions.length, limited: !!mcpOnly })
         }
-      } catch (err) {
-        log.warn('MCP 工具装载失败，本次忽略', { message: err?.message })
       }
 
       // 多个工具可能各搜一次，按 URL 去重后统一回传给前端
@@ -413,12 +481,15 @@ router.post('/chat', async (req, res, next) => {
         stream.send({ type: 'citations', citations: [...citationMap.values()] })
       }
 
+      fitFinalContext(toolDefs)
       await runAgentLoop({
         provider,
         model,
         messages: plan.messages,
         system: finalSystem,
+        maxTokens: safeMaxTokens,
         toolDefs,
+        contextWindow: info.contextWindow,
         signal: abort.signal,
         fallbacks,
         onFallback,
@@ -501,6 +572,7 @@ router.post('/chat', async (req, res, next) => {
       }
     }
 
+    fitFinalContext()
     await streamChat(provider, {
       model,
       messages: plan.messages,
@@ -511,6 +583,13 @@ router.post('/chat', async (req, res, next) => {
       abortSignal: abort.signal,
       fallbacks,
       onFallback,
+      // 重试最多持续十几秒（退避递增），不给反馈的话用户面对的是一个死等的转圈
+      onRetry: (err, attempt, waitMs) => {
+        stream.send({
+          type: 'notice',
+          message: `上游暂时不可用，正在第 ${attempt} 次重试（${Math.round((waitMs || 0) / 1000) || '几'} 秒后）…`,
+        })
+      },
       onDelta: (text) => {
         fullText += text
         stream.send({ type: 'delta', content: text })
@@ -531,13 +610,19 @@ router.post('/chat', async (req, res, next) => {
       finish('aborted')
       return
     }
-    log.error('对话失败', { message: err?.message, code: err?.code, status: err?.status })
-    inc('chat_errors_total', { provider: provider.id, code: err?.code || 'unknown' })
-    // 给用户看翻译过的中文提示；原始 message 已经在日志里
+    usedProviderId = err?.failedProviderId || usedProviderId
+    usedModel = err?.failedModel || usedModel
+    const failedProvider = resolveProvider(usedProviderId)
+    // err.code 只透传字符串语义码（auth_failed 等）；DOMException 的数字 code（如 23）
+    // 既不能漏给前端，也不该进 metrics 标签
+    const errCode =
+      typeof err?.code === 'string' ? err.code : err?.name === 'TimeoutError' ? 'timeout' : 'upstream_error'
+    log.error('对话失败', { message: err?.message, code: err?.code, status: err?.status, provider: usedProviderId, model: usedModel })
+    inc('chat_errors_total', { provider: usedProviderId, code: errCode })
     stream.send({
       type: 'error',
-      message: describeUpstreamError(err, { providerName: provider.name || provider.id }),
-      code: err?.code || 'upstream_error',
+      message: describeUpstreamError(err, { providerName: failedProvider?.name || usedProviderId }),
+      code: errCode,
     })
     finish('error', err)
   }
@@ -608,10 +693,20 @@ router.post('/title', async (req, res, next) => {
   if (!budgetCheck.allowed) {
     return next(new AppError(budgetCheck.message, { status: 429, code: budgetCheck.code }))
   }
+  // 前端断开就停止烧 token；标题生成也不例外
+  const abort = new AbortController()
+  res.on('close', () => {
+    if (!res.writableEnded) abort.abort()
+  })
   try {
     // 统一走 lib/tasks.js：标题只是「小任务」的一种，
     // 单独再写一份实现迟早会和 /api/tasks/title 漂移。
-    const outcome = await runTask('title', input, { provider, model })
+    const outcome = await runTask('title', input, {
+      provider,
+      model,
+      signal: abort.signal,
+      userId: currentUserId(req),
+    })
     res.json({
       title: outcome.result.title,
       model: outcome.model,

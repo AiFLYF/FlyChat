@@ -3,6 +3,7 @@ import { asyncHandler, badRequest, AppError } from '../lib/errors.js'
 import { checkBudget } from '../store/budget.js'
 import { describeTones, runTask, TASK_KINDS } from '../lib/tasks.js'
 import { inc } from '../lib/metrics.js'
+import { currentUserId } from '../lib/auth.js'
 
 const router = Router()
 
@@ -41,6 +42,7 @@ router.post(
       provider: typeof provider === 'string' ? provider : undefined,
       model: typeof model === 'string' ? model : undefined,
       signal: abort.signal,
+      userId: currentUserId(req),
     })
 
     inc('task_calls_total', { kind })

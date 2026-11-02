@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { getDb } from './db.js'
-import { badRequest, notFound } from '../lib/errors.js'
+import { workspaceExists } from '../rag/store.js'
+import { AppError, badRequest, notFound } from '../lib/errors.js'
 
 /**
  * 预设（Preset）持久化。
@@ -104,25 +105,71 @@ function cleanName(name) {
   return s.slice(0, MAX_NAME)
 }
 
-export function listPresets() {
-  return getDb()
-    .prepare('SELECT * FROM presets ORDER BY COALESCE(sort_index, 999999) ASC, created_at ASC')
-    .all()
-    .map(rowToPreset)
+/** 绑定的知识库必须是当前用户可见的；已删除或别人的库不存，打开预设时才不会突然 404 */
+function cleanWorkspaceId(workspaceId, userId) {
+  if (!workspaceId) return null
+  return workspaceExists(workspaceId, { userId }) ? String(workspaceId) : null
 }
 
-export function getPreset(id) {
-  return rowToPreset(getDb().prepare('SELECT * FROM presets WHERE id = ?').get(String(id)))
+/**
+ * 老预设（`user_id` 为 NULL）是开启归属隔离之前的共享数据：
+ * 所有人可见、可直接使用，但只有管理员能改/删，普通用户只能克隆成自己的。
+ */
+function scopeRow(row, { userId = null, isAdmin = false } = {}) {
+  const preset = rowToPreset(row)
+  if (preset && userId && row.user_id == null && !isAdmin) preset.readonly = true
+  return preset
 }
 
-export function createPreset(input = {}) {
+function ownedRow(id, { userId = null } = {}) {
+  const row = getDb().prepare('SELECT * FROM presets WHERE id = ?').get(String(id))
+  if (!row) return null
+  // 别人的预设一律当作不存在：不暴露它是否还在
+  if (userId && row.user_id && row.user_id !== String(userId)) return null
+  return row
+}
+
+function assertWritable(row, { userId = null, isAdmin = false } = {}) {
+  if (!userId) return
+  if (row.user_id === String(userId)) return
+  if (row.user_id == null && isAdmin) return
+  if (row.user_id == null) {
+    throw new AppError('共享预设只能由管理员修改，可先克隆一份再编辑', {
+      status: 403,
+      code: 'preset_readonly',
+    })
+  }
+  throw notFound('预设不存在')
+}
+
+/** 传 userId 时返回「自己的 + 无主共享的」；单用户模式不隔离 */
+export function listPresets({ userId = null, isAdmin = false } = {}) {
+  const db = getDb()
+  const rows = userId
+    ? db
+        .prepare(
+          'SELECT * FROM presets WHERE user_id = ? OR user_id IS NULL ORDER BY COALESCE(sort_index, 999999) ASC, created_at ASC'
+        )
+        .all(String(userId))
+    : db
+        .prepare('SELECT * FROM presets ORDER BY COALESCE(sort_index, 999999) ASC, created_at ASC')
+        .all()
+  return rows.map((row) => scopeRow(row, { userId, isAdmin }))
+}
+
+export function getPreset(id, { userId = null, isAdmin = false } = {}) {
+  const row = ownedRow(id, { userId })
+  return row ? scopeRow(row, { userId, isAdmin }) : null
+}
+
+export function createPreset(input = {}, { userId = null } = {}) {
   const db = getDb()
   const id = `preset-${crypto.randomBytes(6).toString('hex')}`
   const t = now()
   db.prepare(
     `INSERT INTO presets
-     (id, name, description, icon, provider, model, system_prompt, params, workspace_id, mcp_servers, sort_index, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     (id, name, description, icon, provider, model, system_prompt, params, workspace_id, mcp_servers, sort_index, user_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     cleanName(input.name),
@@ -132,25 +179,27 @@ export function createPreset(input = {}) {
     input.model ? String(input.model).slice(0, 200) : null,
     input.systemPrompt ? String(input.systemPrompt).slice(0, MAX_PROMPT) : null,
     JSON.stringify(cleanParams(input.params)),
-    input.workspaceId ? String(input.workspaceId) : null,
+    cleanWorkspaceId(input.workspaceId, userId),
     JSON.stringify(
       Array.isArray(input.mcpServers) ? input.mcpServers.map(String).slice(0, MAX_MCP) : []
     ),
     Number.isFinite(input.sortIndex) ? Number(input.sortIndex) : null,
+    userId ? String(userId) : null,
     t,
     t
   )
-  return getPreset(id)
+  return getPreset(id, { userId })
 }
 
 /**
  * 更新预设。只改传进来的字段（`undefined` 视为「不动」），
  * 想清空某个字段就传 `null` 或空字符串。
  */
-export function updatePreset(id, patch = {}) {
+export function updatePreset(id, patch = {}, { userId = null, isAdmin = false } = {}) {
   const db = getDb()
-  const existing = db.prepare('SELECT id FROM presets WHERE id = ?').get(String(id))
+  const existing = ownedRow(id, { userId })
   if (!existing) throw notFound('预设不存在')
+  assertWritable(existing, { userId, isAdmin })
 
   const sets = []
   const params = []
@@ -174,7 +223,7 @@ export function updatePreset(id, patch = {}) {
     sets.push('params = ?')
     params.push(JSON.stringify(cleanParams(patch.params)))
   }
-  setIf('workspaceId', 'workspace_id', patch.workspaceId === undefined ? undefined : patch.workspaceId ? String(patch.workspaceId) : null)
+  setIf('workspaceId', 'workspace_id', patch.workspaceId === undefined ? undefined : cleanWorkspaceId(patch.workspaceId, userId))
   if (patch.mcpServers !== undefined) {
     sets.push('mcp_servers = ?')
     params.push(
@@ -183,25 +232,32 @@ export function updatePreset(id, patch = {}) {
   }
   setIf('sortIndex', 'sort_index', patch.sortIndex === undefined ? undefined : Number.isFinite(patch.sortIndex) ? Number(patch.sortIndex) : null)
 
-  if (sets.length === 0) return getPreset(id)
+  if (sets.length === 0) return getPreset(id, { userId, isAdmin })
   sets.push('updated_at = ?')
   params.push(now())
   params.push(String(id))
   db.prepare(`UPDATE presets SET ${sets.join(', ')} WHERE id = ?`).run(...params)
-  return getPreset(id)
+  return getPreset(id, { userId, isAdmin })
 }
 
-export function deletePreset(id) {
+export function deletePreset(id, { userId = null, isAdmin = false } = {}) {
+  const row = ownedRow(id, { userId })
+  if (!row) return false
+  if (userId && row.user_id == null && !isAdmin) return false
   return getDb().prepare('DELETE FROM presets WHERE id = ?').run(String(id)).changes > 0
 }
 
-/** 复制一份（用户在已有预设上微调时最常用） */
-export function duplicatePreset(id, name) {
-  const source = getPreset(id)
+/** 复制一份（用户在已有预设上微调时最常用）；副本归当前用户所有 */
+export function duplicatePreset(id, name, { userId = null, isAdmin = false } = {}) {
+  const source = getPreset(id, { userId, isAdmin })
   if (!source) throw notFound('预设不存在')
-  return createPreset({
-    ...source,
-    name: name ? String(name) : `${source.name} 副本`,
-    sortIndex: undefined,
-  })
+  const { readonly: _readonly, ...fields } = source
+  return createPreset(
+    {
+      ...fields,
+      name: name ? String(name) : `${source.name} 副本`,
+      sortIndex: undefined,
+    },
+    { userId }
+  )
 }
