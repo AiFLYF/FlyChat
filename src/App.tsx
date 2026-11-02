@@ -25,6 +25,7 @@ import {
   useUsageOpen,
 } from './components/openPanels'
 import { usePresence } from './lib/usePresence'
+import { resumePendingSyncs } from './lib/serverSync'
 import ToastContainer from './components/ui/Toast'
 
 export default function App() {
@@ -33,6 +34,19 @@ export default function App() {
   const hydrated = useChatStore((s) => s.hydrated)
   const toggleSidebar = useChatStore((s) => s.toggleSidebar)
   const createConversation = useChatStore((s) => s.createConversation)
+  const authLoading = useAuthStore((s) => s.loading)
+  const authError = useAuthStore((s) => s.error)
+  const authConfig = useAuthStore((s) => s.config)
+  const authUser = useAuthStore((s) => s.user)
+  const authModalOpen = useAuthStore((s) => s.modalOpen)
+  const canAccess = !authLoading && !authError && hydrated &&
+    (authConfig?.authMode !== 'multi' || !!authUser)
+
+  // 本地数据恢复后再补发刷新前没同步成功的会话；身份切换会重新触发
+  useEffect(() => {
+    if (!canAccess) return
+    resumePendingSyncs((id) => useChatStore.getState().conversations.find((c) => c.id === id))
+  }, [canAccess])
 
   // 检查 URL 是否包含分享链接（?share= 或 /s/:id / /share/:id）
   const [shareId, setShareId] = useState<string | null>(() => {
@@ -70,7 +84,7 @@ export default function App() {
   const bgRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     bgRef.current?.toggleAttribute('inert', settingsOpen || shortcutsOpen || usageOpen || commandOpen || marketOpen)
-  }, [settingsOpen, shortcutsOpen, usageOpen, commandOpen, marketOpen])
+  }, [settingsOpen, shortcutsOpen, usageOpen, commandOpen, marketOpen, canAccess, shareId])
 
   // 初始化鉴权状态（单用户模式静默跳过，多用户模式检查登录或初始化引导）
   useEffect(() => {
@@ -124,6 +138,8 @@ export default function App() {
         useAuthStore.getState().setUserManagementOpen(false)
         return
       }
+
+      if (!canAccess || shareId) return
 
       // "?" 需要在输入框/文本域聚焦时不触发，否则打不出问号
       const el = e.target as HTMLElement | null
@@ -184,6 +200,8 @@ export default function App() {
     usageOpen,
     commandOpen,
     bumpComposerFocus,
+    canAccess,
+    shareId,
   ])
 
   // 骨架屏覆盖在真实界面之上，数据恢复完成后淡出——
@@ -192,6 +210,23 @@ export default function App() {
 
   if (shareId) {
     return <SharedView shareId={shareId} onClose={closeSharedView} />
+  }
+
+  if (!canAccess) {
+    return (
+      <div className="relative flex h-dvh items-center justify-center bg-canvas text-ink-1">
+        {authLoading && (!authConfig || !authModalOpen) && <BootSkeleton />}
+        {authError && !authLoading && (
+          <div role="alert" className="space-y-4 p-6 text-center">
+            <p>{authError}</p>
+            <button className="rounded-lg bg-accent px-4 py-2 text-on-accent" onClick={() => void useAuthStore.getState().checkAuth()}>
+              重新连接
+            </button>
+          </div>
+        )}
+        <AuthModal />
+      </div>
+    )
   }
 
   return (

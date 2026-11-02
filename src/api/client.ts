@@ -37,6 +37,9 @@ export interface ChatMessagePayload {
   attachments?: Attachment[]
 }
 
+/** 短 GET 的统一超时：服务端接受连接却迟迟不回时，界面不能无限转圈 */
+const GET_TIMEOUT_MS = 30_000
+
 export interface StreamParams {
   settings: Pick<
     Settings,
@@ -155,50 +158,92 @@ export async function streamChat(params: StreamParams, signal?: AbortSignal): Pr
   const decoder = new TextDecoder()
   let buffer = ''
   let streamError: string | null = null
+  let receivedDone = false
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-
-    let idx
-    while ((idx = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, idx).trimEnd()
-      buffer = buffer.slice(idx + 1)
-      if (!line.startsWith('data:')) continue
-      const payload = line.slice(5).trim()
-      if (!payload) continue
-      try {
-        const evt = JSON.parse(payload)
-        if (evt.type === 'delta' && evt.content) onDelta(evt.content)
-        else if (evt.type === 'reasoning' && evt.content) onReasoning?.(evt.content)
-        else if (evt.type === 'citations' && Array.isArray(evt.citations)) onCitations?.(evt.citations)
-        else if (evt.type === 'sources' && Array.isArray(evt.sources)) onSources?.(evt.sources)
-        else if (evt.type === 'tool_call') onToolCall?.(evt)
-        else if (evt.type === 'tool_result') onToolResult?.(evt)
-        else if (evt.type === 'model_switch') onModelSwitch?.(evt)
-        else if (evt.type === 'usage' && evt.usage) onUsage?.(evt.usage)
-        else if (evt.type === 'notice' && evt.message) onNotice?.(evt.message)
-        else if (evt.type === 'image') onImage?.(evt)
-        else if (evt.type === 'meta') {
-          params.onMeta?.({
-            model: evt.model,
-            contextTokens: evt.contextTokens ?? evt.context?.estimatedInputTokens,
-            compressed: evt.compressed ?? evt.context?.trimmed,
-            latencyMs: evt.latencyMs,
-            contextWindow: evt.contextWindow,
-            preset: evt.preset,
-          })
-        } else if (evt.type === 'error') {
-          streamError = evt.message
-        }
-      } catch {
-        /* ignore */
-      }
+  const handleLine = (line: string) => {
+    if (!line.startsWith('data:')) return
+    const payload = line.slice(5).trim()
+    if (!payload) return
+    let evt
+    try {
+      evt = JSON.parse(payload)
+    } catch {
+      // 忽略非 JSON 行，但回调异常必须交还调用方。
+      return
+    }
+    if (!evt || typeof evt !== 'object') return
+    if (evt.type === 'delta' && evt.content) onDelta(evt.content)
+    else if (evt.type === 'reasoning' && evt.content) onReasoning?.(evt.content)
+    else if (evt.type === 'citations' && Array.isArray(evt.citations)) onCitations?.(evt.citations)
+    else if (evt.type === 'sources' && Array.isArray(evt.sources)) onSources?.(evt.sources)
+    else if (evt.type === 'tool_call') onToolCall?.(evt)
+    else if (evt.type === 'tool_result') onToolResult?.(evt)
+    else if (evt.type === 'model_switch') onModelSwitch?.(evt)
+    else if (evt.type === 'usage' && evt.usage) onUsage?.(evt.usage)
+    else if (evt.type === 'notice' && evt.message) onNotice?.(evt.message)
+    else if (evt.type === 'image') onImage?.(evt)
+    else if (evt.type === 'meta') {
+      params.onMeta?.({
+        model: evt.model,
+        contextTokens: evt.contextTokens ?? evt.context?.estimatedInputTokens,
+        compressed: evt.compressed ?? evt.context?.trimmed,
+        latencyMs: evt.latencyMs,
+        contextWindow: evt.contextWindow,
+        preset: evt.preset,
+      })
+    } else if (evt.type === 'error') {
+      streamError = evt.message || '服务端生成失败'
+    } else if (evt.type === 'done') {
+      receivedDone = true
     }
   }
 
-  if (streamError) throw new Error(streamError)
+  const consumeBuffer = (final = false) => {
+    let idx
+    while (!receivedDone && (idx = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, idx).trimEnd()
+      buffer = buffer.slice(idx + 1)
+      handleLine(line)
+    }
+    if (final && !receivedDone && buffer) {
+      const line = buffer
+      buffer = ''
+      handleLine(line.trimEnd())
+    }
+  }
+
+  try {
+    while (!receivedDone) {
+      let result: ReadableStreamReadResult<Uint8Array>
+      try {
+        if (signal?.aborted) throw new DOMException('请求已取消', 'AbortError')
+        result = await reader.read()
+      } catch (err) {
+        if (signal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
+          throw new DOMException('请求已取消', 'AbortError')
+        }
+        buffer += decoder.decode()
+        consumeBuffer(true)
+        throw new Error(streamError || `响应流意外中断：${err instanceof Error ? err.message : String(err)}`)
+      }
+      if (signal?.aborted) throw new DOMException('请求已取消', 'AbortError')
+      buffer += result.done ? decoder.decode() : decoder.decode(result.value, { stream: true })
+      consumeBuffer(result.done)
+      if (result.done) break
+    }
+    if (signal?.aborted) throw new DOMException('请求已取消', 'AbortError')
+    if (streamError) throw new Error(streamError)
+    if (!receivedDone) throw new Error('响应流意外中断：未收到完成标记，请重试')
+  } finally {
+    // done 是协议终点（usage 应先到达），不再等待连接 EOF 或处理后续事件。
+    try {
+      await reader.cancel()
+    } catch {
+      /* 已中断的底层连接无需再次报错 */
+    } finally {
+      reader.releaseLock()
+    }
+  }
 }
 
 export interface ProvidersResult {
@@ -208,7 +253,15 @@ export interface ProvidersResult {
 }
 
 export async function fetchProviders(): Promise<ProvidersResult> {
-  const res = await fetch('/api/providers', { credentials: 'include' })
+  let res: Response
+  try {
+    res = await fetch('/api/providers', {
+      credentials: 'include',
+      signal: AbortSignal.timeout(GET_TIMEOUT_MS),
+    })
+  } catch {
+    throw new Error('无法获取可用模型提供商（请求超时或网络错误）')
+  }
   if (!res.ok) throw new Error('无法获取可用模型提供商')
   const json = await res.json()
   return { providers: json.providers ?? [], webSearch: !!json.webSearch }
@@ -218,13 +271,15 @@ export async function fetchProviders(): Promise<ProvidersResult> {
 async function postJson<T = Record<string, unknown>>(
   url: string,
   body?: unknown,
-  method = 'POST'
+  method = 'POST',
+  signal?: AbortSignal
 ): Promise<T> {
   const res = await fetch(url, {
     method,
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
   })
   const text = await res.text()
   let json: any = {}
@@ -251,7 +306,19 @@ async function postJson<T = Record<string, unknown>>(
 
 /** 统一的 GET 请求封装 */
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { credentials: 'include' })
+  let res: Response
+  try {
+    res = await fetch(url, {
+      credentials: 'include',
+      // 启动/翻页都是短请求：服务端接受连接却迟迟不回时，不能让界面无限转圈
+      signal: AbortSignal.timeout(GET_TIMEOUT_MS),
+    })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
+      throw new Error('请求超时，请检查服务端是否正常')
+    }
+    throw err
+  }
   const text = await res.text()
   let json: any = {}
   if (text) {
@@ -322,7 +389,7 @@ export async function completeOnce(params: {
   system?: string
   messages: ChatMessagePayload[]
   maxTokens?: number
-}): Promise<string> {
+}, signal?: AbortSignal): Promise<string> {
   let text = ''
   await streamChat(
     {
@@ -338,14 +405,17 @@ export async function completeOnce(params: {
         text += t
       },
     },
-    undefined
+    signal
   )
   return text.trim()
 }
 
 export async function fetchModelsCatalog(): Promise<ServerModelInfo[]> {
   try {
-    const res = await fetch('/api/models', { credentials: 'include' })
+    const res = await fetch('/api/models', {
+      credentials: 'include',
+      signal: AbortSignal.timeout(GET_TIMEOUT_MS),
+    })
     if (!res.ok) return []
     const json = await res.json()
     return json.models ?? []
@@ -357,17 +427,20 @@ export async function fetchModelsCatalog(): Promise<ServerModelInfo[]> {
 export async function generateServerTitle(
   messages: { role: Role; content: string }[],
   provider?: string,
-  model?: string
+  model?: string,
+  signal?: AbortSignal
 ): Promise<string> {
   try {
-    const res = await postJson<{ title?: string }>('/api/tasks/title', { messages, provider, model })
+    const res = await postJson<{ title?: string }>('/api/tasks/title', { messages, provider, model }, 'POST', signal)
     return res.title || '新对话'
-  } catch {
+  } catch (err) {
+    if (signal?.aborted) throw err
     const res = await fetch('/api/title', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages, provider, model }),
+      signal,
     })
     const json = await res.json().catch(() => ({}))
     return json.title || '新对话'
@@ -400,9 +473,32 @@ export async function fetchServerUsage(): Promise<ServerUsageSummary | null> {
   }
 }
 
-/** 删除服务端会话；本地删除后调用，失败不阻塞离线使用 */
-export async function deleteConversationFromServer(id: string): Promise<void> {
-  await postJson(`/api/conversations/${encodeURIComponent(id)}`, undefined, 'DELETE')
+export interface SyncResult {
+  ok: boolean
+  status?: number
+  /** 网络错误、5xx、429 值得重试；4xx（未登录/参数错）重试也没用 */
+  retryable: boolean
+}
+
+function syncResultOf(res: Response): SyncResult {
+  return {
+    ok: res.ok,
+    status: res.status,
+    retryable: !res.ok && (res.status === 429 || res.status >= 500),
+  }
+}
+
+/** 删除服务端会话；失败信息交给重试队列判断是否值得再试 */
+export async function deleteConversationFromServer(id: string): Promise<SyncResult> {
+  try {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    })
+    return syncResultOf(res)
+  } catch {
+    return { ok: false, retryable: true }
+  }
 }
 
 /** 清空服务端当前用户的全部会话；与本地 clearAll 配套使用 */
@@ -410,7 +506,7 @@ export async function clearConversationsFromServer(): Promise<void> {
   await postJson('/api/conversations', { confirm: 'DELETE' }, 'DELETE')
 }
 
-export async function syncConversationToServer(conv: Conversation): Promise<boolean> {
+export async function syncConversationToServer(conv: Conversation): Promise<SyncResult> {
   try {
     // 剥离附件大体积 base64 与缩略图，避免同步几 MB 冗余数据占用网络
     const sanitized: Conversation = {
@@ -432,9 +528,9 @@ export async function syncConversationToServer(conv: Conversation): Promise<bool
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sanitized),
     })
-    return res.ok
+    return syncResultOf(res)
   } catch {
-    return false
+    return { ok: false, retryable: true }
   }
 }
 
@@ -476,7 +572,9 @@ export async function fetchShareSnapshot(
   }
   if (!res.ok) {
     const json = await res.json().catch(() => ({}))
-    throw new Error(json.error || '获取分享内容失败')
+    const err = new Error(json.error || '获取分享内容失败')
+    ;(err as unknown as Record<string, unknown>).status = res.status
+    throw err
   }
   return await res.json()
 }
@@ -754,8 +852,8 @@ export async function generateTaskSummary(params: {
 export async function generateTaskSuggestions(params: {
   text?: string
   messages?: { role: Role; content: string }[]
-}): Promise<{ suggestions: string[] }> {
-  return await postJson<{ suggestions: string[] }>('/api/tasks/suggest', params)
+}, signal?: AbortSignal): Promise<{ suggestions: string[] }> {
+  return await postJson<{ suggestions: string[] }>('/api/tasks/suggest', params, 'POST', signal)
 }
 
 export async function generateTaskRewrite(params: {

@@ -21,6 +21,7 @@ import type {
   ConversationFolder,
   PromptItem,
   ProviderInfo,
+  Settings,
   ThemeMode,
   ImageStatus,
 } from '../types'
@@ -263,6 +264,62 @@ function numOr(v: unknown, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback
 }
 
+/**
+ * 从备份里挑出可安全恢复的偏好设置。
+ * 换机导入时服务商可能还没配好：指向不存在的服务商就整对忽略，
+ * 让 loadProviders 维持当前可用配置，而不是把聊天打成「未配置」。
+ */
+function pickImportSettings(input: unknown, providers: ProviderInfo[]): Partial<Settings> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {}
+  const raw = input as Record<string, unknown>
+  const out: Partial<Settings> = {}
+
+  if (typeof raw.systemPrompt === 'string') out.systemPrompt = raw.systemPrompt
+
+  if (typeof raw.temperature === 'number' && Number.isFinite(raw.temperature)) {
+    out.temperature = Math.min(2, Math.max(0, raw.temperature))
+  }
+  if (typeof raw.topP === 'number' && Number.isFinite(raw.topP)) {
+    out.topP = Math.min(1, Math.max(0, raw.topP))
+  }
+  if (typeof raw.maxTokens === 'number' && Number.isFinite(raw.maxTokens) && raw.maxTokens > 0) {
+    out.maxTokens = Math.min(1_000_000, Math.round(raw.maxTokens))
+  }
+
+  for (const key of [
+    'webSearch',
+    'thinking',
+    'tools',
+    'imageGeneration',
+    'usingContext',
+    'compareEnabled',
+  ] as const) {
+    if (typeof raw[key] === 'boolean') out[key] = raw[key]
+  }
+
+  if (raw.theme === 'light' || raw.theme === 'dark' || raw.theme === 'system') {
+    out.theme = raw.theme
+  }
+
+  if (Array.isArray(raw.compareModels)) {
+    out.compareModels = raw.compareModels
+      .filter((v): v is string => typeof v === 'string' && v.length > 0)
+      .slice(0, 8)
+  }
+
+  if (typeof raw.provider === 'string') {
+    const provider = providers.find((p) => p.id === raw.provider)
+    if (provider) {
+      out.provider = provider.id
+      const model = typeof raw.model === 'string' ? raw.model.trim().slice(0, 200) : ''
+      out.model = model || provider.models[0] || ''
+    }
+  }
+
+  if (typeof raw.workspaceId === 'string') out.workspaceId = raw.workspaceId
+  return out
+}
+
 function isValidMessage(m: unknown): m is Conversation['messages'][number] {
   if (!m || typeof m !== 'object') return false
   const x = m as Record<string, unknown>
@@ -375,7 +432,16 @@ export default function SettingsModal() {
       const text = await file.text()
       const data = JSON.parse(text)
       const { conversations, prompts, assistants, folders, skipped } = validateBackup(data)
-      if (!conversations.length && !prompts.length && !assistants.length && !folders.length) {
+      const rawSettings =
+        data && typeof data === 'object' ? (data as Record<string, unknown>).settings : undefined
+      const settingsPatch = pickImportSettings(rawSettings, providers)
+      if (
+        !conversations.length &&
+        !prompts.length &&
+        !assistants.length &&
+        !folders.length &&
+        Object.keys(settingsPatch).length === 0
+      ) {
         setNotice('导入失败：文件不是有效的 FlyChat 备份')
         return
       }
@@ -387,10 +453,13 @@ export default function SettingsModal() {
       if (conversations.length) importConversations(conversations)
       prompts.forEach((p) => addPrompt(p))
       assistants.forEach((a) => addAssistant(a))
+      if (Object.keys(settingsPatch).length) updateSettings(settingsPatch)
       setNotice(
         skipped > 0
           ? `导入完成：有 ${skipped} 项因格式不正确被跳过`
-          : '导入成功'
+          : Object.keys(settingsPatch).length
+            ? '导入成功，偏好设置已恢复'
+            : '导入成功'
       )
     } catch (e) {
       setNotice(`导入失败：${e instanceof Error ? e.message : String(e)}`)

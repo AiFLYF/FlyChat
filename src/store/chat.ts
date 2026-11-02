@@ -1,10 +1,13 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+import { clearConversationsFromServer } from '../api/client'
+import { flushPersist, idbStorage, setPersistenceEnabled } from '../lib/db'
 import {
-  clearConversationsFromServer,
-  deleteConversationFromServer,
-} from '../api/client'
-import { idbStorage } from '../lib/db'
+  queueConversationDelete,
+  resetServerSyncQueue,
+  restoreConversationSync,
+  setServerSyncScope,
+} from '../lib/serverSync'
 import { uid } from '../lib/id'
 import type {
   Assistant,
@@ -43,6 +46,8 @@ interface ChatState {
   reorderConversations: (orderedIds: string[]) => void
 
   setFolders: (folders: ConversationFolder[]) => void
+  /** 文件夹迁移后把会话上的临时 folderId 换成服务端 id */
+  applyFolderIdMap: (idMap: Map<string, string>) => void
   createFolder: (name: string, emoji?: string, color?: string) => string
   updateFolder: (id: string, patch: Partial<ConversationFolder>) => void
   deleteFolder: (id: string) => void
@@ -132,19 +137,16 @@ export const useChatStore = create<ChatState>()(
         set((s) => ({
           conversations: [conv, ...s.conversations],
           activeId: conv.id,
+          // 全局系统提示词是「用户偏好」，不随会话切换增删；
+          // 助手/会话级指令只写进 conv.systemPrompt，发送时优先级更高。
           settings: assistant
             ? {
                 ...s.settings,
-                systemPrompt: assistant.systemPrompt || '',
                 provider: assistant.provider || s.settings.provider,
                 model: assistant.model || s.settings.model,
                 temperature: assistant.temperature ?? s.settings.temperature,
               }
-            : {
-                ...s.settings,
-                // 普通新对话：清空系统提示词，坚决不残留上一个专家的设定
-                systemPrompt: '',
-              },
+            : s.settings,
         }))
         return conv.id
       },
@@ -157,17 +159,20 @@ export const useChatStore = create<ChatState>()(
             activeId: s.activeId === id ? conversations[0]?.id ?? null : s.activeId,
           }
         })
-        // 本地立即删除；服务端删除失败（离线/未同步/单用户无存储）不阻塞 UI
-        void deleteConversationFromServer(id).catch(() => {})
+        // 本地立即删除；服务端删除失败（离线/未同步/单用户无存储）不阻塞 UI，交给队列重试
+        queueConversationDelete(id)
       },
 
-      restoreConversation: (conv) =>
+      restoreConversation: (conv) => {
         set((s) => ({
           conversations: s.conversations.some((c) => c.id === conv.id)
             ? s.conversations
             : [conv, ...s.conversations],
           activeId: conv.id,
-        })),
+        }))
+        // 撤销删除时删除任务可能还在队列里：取消并重新同步，避免服务端副本被删掉
+        void restoreConversationSync(conv)
+      },
 
       renameConversation: (id, title) =>
         set((s) => ({
@@ -183,32 +188,22 @@ export const useChatStore = create<ChatState>()(
           const assistant = conv.assistantId
             ? state.assistants.find((a) => a.id === conv.assistantId)
             : undefined
-          const prompt = conv.systemPrompt ?? assistant?.systemPrompt ?? ''
           set({
             activeId: id,
-            settings: {
-              ...state.settings,
-              systemPrompt: prompt,
-              // 切回助手会话时恢复它绑定的模型。
-              // 只恢复提示词不恢复模型，会让「用 A 助手创建的会话」在切回来之后
-              // 继续用 B 会话的模型发请求，轻则答非所问，重则 provider/model 对不上直接报错。
-              ...(assistant
-                ? {
-                    provider: assistant.provider || state.settings.provider,
-                    model: assistant.model || state.settings.model,
-                    temperature: assistant.temperature ?? state.settings.temperature,
-                  }
-                : {}),
-            },
+            // 切回助手会话时恢复它绑定的模型。
+            // 只恢复模型不恢复提示词：系统提示词按「会话 > 助手 > 全局默认」解析，
+            // 切会话不能把用户在设置里写的全局默认指令抹掉。
+            settings: assistant
+              ? {
+                  ...state.settings,
+                  provider: assistant.provider || state.settings.provider,
+                  model: assistant.model || state.settings.model,
+                  temperature: assistant.temperature ?? state.settings.temperature,
+                }
+              : state.settings,
           })
         } else {
-          set({
-            activeId: id,
-            settings: {
-              ...state.settings,
-              systemPrompt: '',
-            },
-          })
+          set({ activeId: id })
         }
       },
 
@@ -227,6 +222,18 @@ export const useChatStore = create<ChatState>()(
         })),
 
       setFolders: (folders) => set({ folders }),
+
+      applyFolderIdMap: (idMap) =>
+        set((s) => ({
+          folders: s.folders.map((f) => {
+            const next = idMap.get(f.id)
+            return next ? { ...f, id: next } : f
+          }),
+          conversations: s.conversations.map((c) => {
+            const next = c.folderId ? idMap.get(c.folderId) : undefined
+            return next ? { ...c, folderId: next } : c
+          }),
+        })),
 
       createFolder: (name, emoji = '📁', color = 'blue') => {
         const id = uid()
@@ -299,7 +306,6 @@ export const useChatStore = create<ChatState>()(
           conversations: s.conversations.map((c) =>
             c.id === id ? { ...c, systemPrompt, updatedAt: Date.now() } : c
           ),
-          settings: s.activeId === id ? { ...s.settings, systemPrompt } : s.settings,
         })),
 
       reorderConversations: (orderedIds) =>
@@ -466,7 +472,11 @@ export const useChatStore = create<ChatState>()(
 
       clearAll: () => {
         set({ conversations: [], activeId: null })
-        void clearConversationsFromServer().catch(() => {})
+        // 先取消 outbox 里的待办并等在途同步落地，再清服务端：
+        // 否则排队中的同步会在清空之后把会话重新写回去
+        void resetServerSyncQueue()
+          .then(() => clearConversationsFromServer())
+          .catch(() => {})
       },
 
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
@@ -496,7 +506,8 @@ export const useChatStore = create<ChatState>()(
       setHydrated: (v) => set({ hydrated: v }),
     }),
     {
-      name: 'flychat-store',
+      name: 'flychat-guest',
+      skipHydration: true,
       storage: createJSONStorage(() => idbStorage),
       partialize: (s) => ({
         conversations: s.conversations,
@@ -510,9 +521,20 @@ export const useChatStore = create<ChatState>()(
       // 兼容旧版本：补齐新增设置字段
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<ChatState>
+        // 上次关闭时正好在流式输出中途，streaming 状态会落盘；
+        // 恢复后已没有流在跑，归一为 aborted，否则输入框/重发会一直被当成生成中。
+        const conversations = Array.isArray(p.conversations)
+          ? p.conversations.map((c) => ({
+              ...c,
+              messages: Array.isArray(c.messages)
+                ? c.messages.map((m) => (m?.status === 'streaming' ? { ...m, status: 'aborted' as const } : m))
+                : c.messages,
+            }))
+          : current.conversations
         return {
           ...current,
           ...p,
+          conversations,
           settings: { ...DEFAULT_SETTINGS, ...(p.settings ?? {}) },
         }
       },
@@ -524,5 +546,27 @@ export const useChatStore = create<ChatState>()(
     }
   )
 )
+
+let activeStorage: string | null = null
+let scopeQueue: Promise<void> = Promise.resolve()
+
+export function activateChatStorage(name: string): Promise<void> {
+  scopeQueue = scopeQueue.then(async () => {
+    if (activeStorage === name) return
+    setPersistenceEnabled(false)
+    try {
+      await flushPersist()
+      // 身份切换：旧账号的待办留在它自己的作用域里，不能带着新 cookie 发出去
+      setServerSyncScope(name)
+      useChatStore.persist.setOptions({ name })
+      useChatStore.setState({ ...useChatStore.getInitialState(), hydrated: false })
+      await useChatStore.persist.rehydrate()
+      activeStorage = name
+    } finally {
+      setPersistenceEnabled(true)
+    }
+  })
+  return scopeQueue
+}
 
 export { uid }

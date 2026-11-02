@@ -24,7 +24,7 @@ import {
 } from 'lucide-react'
 import { generateTaskRewrite, fetchTasksInfo } from '../api/client'
 import { showToast } from './ui/Toast'
-import MarkdownRenderer from './MarkdownRenderer'
+import LazyMarkdown from './LazyMarkdown'
 import ReasoningBlock from './ReasoningBlock'
 import Citations from './Citations'
 import ToolCallsBlock from './ToolCallsBlock'
@@ -341,7 +341,7 @@ const MessageItem = memo(function MessageItem({
                 toolResults={message.toolResults}
               />
             )}
-            <MarkdownRenderer content={message.content} />
+            <LazyMarkdown content={message.content} />
             {streaming && (
               // deslop-ignore-next-line 16 流式输出光标是功能性指示器
               <span className="stream-caret ml-0.5 inline-block h-[18px] w-[7px] rounded-[2px] bg-accent align-middle" />

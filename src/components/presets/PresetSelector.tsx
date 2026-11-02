@@ -134,6 +134,14 @@ export default function PresetSelector({ placement = 'top' }: PresetSelectorProp
                             思考
                           </span>
                         )}
+                        {preset.readonly && (
+                          <span
+                            className="rounded bg-sky-500/15 px-1 py-0.2 text-[9px] font-medium text-sky-600 dark:text-sky-400"
+                            title="共享预设只有管理员可以修改，可克隆成自己的"
+                          >
+                            共享
+                          </span>
+                        )}
                       </div>
                       {preset.description && (
                         <p className="text-[10px] text-ink-4 truncate">{preset.description}</p>
@@ -143,40 +151,51 @@ export default function PresetSelector({ placement = 'top' }: PresetSelectorProp
 
                   <div className="hidden group-hover:flex items-center gap-1 shrink-0 ml-1">
                     <button
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.stopPropagation()
-                        duplicatePreset(preset.id)
-                        showToast('已克隆预设', 'success')
+                        try {
+                          await duplicatePreset(preset.id)
+                          showToast('已克隆预设', 'success')
+                        } catch (err) {
+                          showToast(err instanceof Error ? err.message : '克隆预设失败', 'error')
+                        }
                       }}
                       className={ICON_BTN_SM}
                       title="克隆预设"
                     >
                       <Copy size={11} />
                     </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setOpen(false)
-                        setModalOpen(true, preset)
-                      }}
-                      className={ICON_BTN_SM}
-                      title="编辑预设"
-                    >
-                      <Sliders size={11} />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (confirm(`确定删除预设「${preset.name}」吗？`)) {
-                          deletePreset(preset.id)
-                          showToast('已删除预设', 'info')
-                        }
-                      }}
-                      className={`${ICON_BTN_SM} hover:text-danger`}
-                      title="删除预设"
-                    >
-                      <Trash2 size={11} />
-                    </button>
+                    {!preset.readonly && (
+                      <>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setOpen(false)
+                            setModalOpen(true, preset)
+                          }}
+                          className={ICON_BTN_SM}
+                          title="编辑预设"
+                        >
+                          <Sliders size={11} />
+                        </button>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation()
+                            if (!confirm(`确定删除预设「${preset.name}」吗？`)) return
+                            try {
+                              await deletePreset(preset.id)
+                              showToast('已删除预设', 'info')
+                            } catch (err) {
+                              showToast(err instanceof Error ? err.message : '删除预设失败', 'error')
+                            }
+                          }}
+                          className={`${ICON_BTN_SM} hover:text-danger`}
+                          title="删除预设"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               )

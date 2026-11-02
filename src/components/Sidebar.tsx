@@ -29,7 +29,6 @@ import { useChatStore } from '../store/chat'
 import { useAuthStore } from '../store/auth'
 import { useKnowledgeStore } from '../store/knowledge'
 import {
-  fetchFolders,
   createFolder as createFolderApi,
   updateFolder as updateFolderApi,
   deleteFolder as deleteFolderApi,
@@ -37,6 +36,7 @@ import {
   fetchTags,
   updateConversationMetadata,
 } from '../api/client'
+import { syncFoldersFromServer } from '../lib/folderSync'
 import { useCommandPaletteOpen, useMarketOpen, useSettingsOpen, useUsageOpen } from './openPanels'
 import { BrandLogo } from './ui/BrandLogo'
 import { showToast } from './ui/Toast'
@@ -365,7 +365,7 @@ function ConversationItem({
 export default function Sidebar({ open }: { open: boolean }) {
   const conversations = useChatStore((s) => s.conversations)
   const folders = useChatStore((s) => s.folders || [])
-  const setFolders = useChatStore((s) => s.setFolders)
+  const applyFolderIdMap = useChatStore((s) => s.applyFolderIdMap)
   const createConversation = useChatStore((s) => s.createConversation)
   const createFolder = useChatStore((s) => s.createFolder)
   const updateFolder = useChatStore((s) => s.updateFolder)
@@ -421,78 +421,8 @@ export default function Sidebar({ open }: { open: boolean }) {
   useEffect(() => {
     let cancelled = false
 
-    fetchFolders()
-      .then(async (res) => {
-        if (cancelled || !res || !Array.isArray(res.items)) return
-
-        const serverFolders: ConversationFolder[] = res.items.map((it) => ({
-          id: it.id,
-          name: it.name,
-          emoji: it.icon || '📁',
-          createdAt: Date.now(),
-        }))
-        const serverIds = new Set(serverFolders.map((f) => f.id))
-
-        /**
-         * 本地有、服务端没有的文件夹 = 还没迁移上去的（首次升级，或上次迁移中途失败）。
-         *
-         * 之前只要服务端非空就直接 setFolders(服务端列表)，把本地这批整个丢掉：
-         * 一次迁移里如果第 2 个 createFolderApi 失败，第 1 个已经落到服务端，
-         * 下次挂载就走「服务端非空」分支，失败的那个文件夹永远没机会再迁移。
-         * 现在统一成「按 id 差集补齐 + 合并」，两条路径都走同一套逻辑。
-         */
-        const pending = useChatStore.getState().folders.filter((f) => !serverIds.has(f.id))
-        if (pending.length === 0) {
-          setFolders(serverFolders)
-          return
-        }
-
-        const idMap = new Map<string, string>()
-        const createdFolders: ConversationFolder[] = []
-        // 同名即视为「上次其实已经建成功，只是没拿到响应」：
-        // 直接复用服务端那条，否则每次挂载都会多建一个同名文件夹。
-        const byName = new Map(serverFolders.map((f) => [f.name.trim(), f]))
-        for (const f of pending) {
-          const same = byName.get(f.name.trim())
-          if (same) {
-            idMap.set(f.id, same.id)
-            continue
-          }
-          try {
-            const created = await createFolderApi({ name: f.name, icon: f.emoji })
-            if (created?.id) {
-              idMap.set(f.id, created.id)
-              createdFolders.push({ ...f, id: created.id })
-            }
-          } catch {
-            // 单个推失败就留在本地，下次挂载再试；不能因为失败把本地删掉
-          }
-        }
-        if (cancelled) return
-
-        // 服务端已有的 + 本次新建的 + 仍然推不上去的本地项，一个都不能少
-        const merged: ConversationFolder[] = [
-          ...serverFolders,
-          ...createdFolders,
-          ...pending.filter((f) => !idMap.has(f.id)),
-        ]
-        setFolders(merged)
-
-        if (idMap.size === 0) return
-
-        useChatStore.setState((s) => ({
-          conversations: s.conversations.map((c) => {
-            const next = c.folderId ? idMap.get(c.folderId) : undefined
-            return next ? { ...c, folderId: next } : c
-          }),
-        }))
-
-        // 会话归属也要落库，否则服务端只知道文件夹存在、不知道哪些会话在里面
-        for (const c of useChatStore.getState().conversations) {
-          if (c.folderId) void updateConversationMetadata(c.id, { folderId: c.folderId }).catch(() => {})
-        }
-      })
-      .catch(() => {})
+    // 文件夹的迁移/合并逻辑在 folderSync 里，组件只负责触发与卸载取消
+    void syncFoldersFromServer({ isCancelled: () => cancelled }).catch(() => {})
 
     fetchTags()
       .then((res) => {
@@ -506,7 +436,7 @@ export default function Sidebar({ open }: { open: boolean }) {
     return () => {
       cancelled = true
     }
-  }, [setFolders])
+  }, [])
 
   useEffect(() => {
     asideRef.current?.toggleAttribute('inert', !open)
@@ -586,8 +516,9 @@ export default function Sidebar({ open }: { open: boolean }) {
     const map = new Map<string, Conversation[]>()
     for (const f of folders) map.set(f.id, [])
     for (const c of filtered) {
-      if (c.folderId && map.has(c.folderId)) {
-        map.get(c.folderId)!.push(c)
+      if (c.folderId) {
+        const list = map.get(c.folderId)
+        if (list) list.push(c)
       }
     }
     // 排序
@@ -641,12 +572,7 @@ export default function Sidebar({ open }: { open: boolean }) {
     try {
       const serverFolder = await createFolderApi({ name, icon: '📁' })
       if (serverFolder?.id && serverFolder.id !== localId) {
-        useChatStore.setState((s) => ({
-          folders: s.folders.map((f) => (f.id === localId ? { ...f, id: serverFolder.id } : f)),
-          conversations: s.conversations.map((c) =>
-            c.folderId === localId ? { ...c, folderId: serverFolder.id } : c
-          ),
-        }))
+        applyFolderIdMap(new Map([[localId, serverFolder.id]]))
       }
     } catch (err) {
       console.warn('同步创建文件夹到服务端失败:', err)
@@ -904,6 +830,8 @@ export default function Sidebar({ open }: { open: boolean }) {
               <div className="group flex items-center justify-between rounded-md px-1.5 py-1 text-ink-2 hover:bg-hover hover:text-ink-1">
                 <button
                   onClick={() => toggleFolderExpanded(folder.id)}
+                  aria-expanded={isExpanded}
+                  aria-label={`${isExpanded ? '收起' : '展开'}文件夹 ${folder.name}`}
                   className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[12px] font-medium"
                 >
                   <ChevronRight
@@ -943,6 +871,7 @@ export default function Sidebar({ open }: { open: boolean }) {
                     }}
                     className={ICON_BTN_SM}
                     title="重命名文件夹"
+                    aria-label="重命名文件夹"
                   >
                     <Pencil size={11} />
                   </button>
@@ -950,6 +879,7 @@ export default function Sidebar({ open }: { open: boolean }) {
                     onClick={() => handleDeleteFolder(folder)}
                     className={`${ICON_BTN_SM} hover:text-danger`}
                     title="删除文件夹"
+                    aria-label="删除文件夹"
                   >
                     <Trash2 size={11} />
                   </button>
@@ -1138,7 +1068,7 @@ export default function Sidebar({ open }: { open: boolean }) {
                     <button
                       onClick={() => {
                         setUserMenuOpen(false)
-                        void logout()
+                        void logout().catch((err) => showToast(err instanceof Error ? err.message : '退出登录失败，请重试', 'error'))
                       }}
                       className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-danger hover:bg-hover"
                     >

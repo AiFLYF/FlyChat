@@ -147,7 +147,8 @@ export interface ShareResponse {
   id: string
   title: string
   url: string
-  expiresAt?: string | null
+  /** 毫秒时间戳；服务端 createShare 返回 number，永久有效为 null */
+  expiresAt?: number | null
   hasPassword?: boolean
 }
 
@@ -363,6 +364,8 @@ export interface Preset {
   workspaceId?: string
   mcpServers?: string[]
   sortIndex?: number
+  /** 多用户下的无主共享预设：只读，可克隆成自己的 */
+  readonly?: boolean
   createdAt?: number
   updatedAt?: number
 }
@@ -423,6 +426,7 @@ export interface WorkspaceItem {
 
 export type DocumentStage =
   | '已入队'
+  | '已重新入队'
   | '抓取网页'
   | '解析文件'
   | '切块'
@@ -431,7 +435,6 @@ export type DocumentStage =
   | '已完成'
   | '失败'
   | '中断'
-  | string
 
 export interface DocumentItem {
   id: string

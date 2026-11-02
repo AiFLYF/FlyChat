@@ -21,6 +21,19 @@ interface PresetState {
   savePreset: (preset: Partial<Preset>) => Promise<Preset>
   deletePreset: (id: string) => Promise<void>
   duplicatePreset: (id: string, name?: string) => Promise<Preset>
+  reset: () => void
+}
+
+let sessionVersion = 0
+let listRequest = 0
+
+/**
+ * 列表请求可能晚于本次变更返回：作废在途请求，避免旧列表把刚写入的结果覆盖掉。
+ * 同时收起 loading，否则被作废的请求不会再负责把它关掉。
+ */
+function invalidateListRequest() {
+  listRequest += 1
+  if (usePresetStore.getState().loading) usePresetStore.setState({ loading: false })
 }
 
 export const usePresetStore = create<PresetState>((set, get) => ({
@@ -60,19 +73,23 @@ export const usePresetStore = create<PresetState>((set, get) => ({
   },
 
   fetchPresets: async () => {
+    const request = ++listRequest
     try {
       set({ loading: true })
       const res = await apiFetchPresets()
-      set({ presets: res.items || [], loading: false })
+      if (request === listRequest) set({ presets: res.items || [], loading: false })
     } catch {
-      set({ loading: false })
+      if (request === listRequest) set({ loading: false })
     }
   },
 
   savePreset: async (preset) => {
+    const session = sessionVersion
     let saved: Preset
     if (preset.id) {
       saved = await apiUpdatePreset(preset.id, preset)
+      invalidateListRequest()
+      if (session !== sessionVersion) return saved
       set((s) => ({
         presets: s.presets.map((p) => (p.id === saved.id ? saved : p)),
         modalOpen: false,
@@ -80,6 +97,8 @@ export const usePresetStore = create<PresetState>((set, get) => ({
       }))
     } else {
       saved = await apiSavePreset(preset)
+      invalidateListRequest()
+      if (session !== sessionVersion) return saved
       set((s) => ({
         presets: [saved, ...s.presets],
         modalOpen: false,
@@ -90,7 +109,12 @@ export const usePresetStore = create<PresetState>((set, get) => ({
   },
 
   deletePreset: async (id) => {
-    await apiDeletePreset(id)
+    const session = sessionVersion
+    const result = await apiDeletePreset(id)
+    // 服务端返回 ok:false 表示不存在或没有权限，不能假装删掉并从列表里移除
+    if (!result.ok) throw new Error('预设不存在或没有权限删除')
+    invalidateListRequest()
+    if (session !== sessionVersion) return
     set((s) => ({
       presets: s.presets.filter((p) => p.id !== id),
       activePresetId: s.activePresetId === id ? null : s.activePresetId,
@@ -98,8 +122,16 @@ export const usePresetStore = create<PresetState>((set, get) => ({
   },
 
   duplicatePreset: async (id, name) => {
+    const session = sessionVersion
     const dup = await apiDuplicatePreset(id, name)
-    set((s) => ({ presets: [dup, ...s.presets] }))
+    invalidateListRequest()
+    if (session === sessionVersion) set((s) => ({ presets: [dup, ...s.presets] }))
     return dup
+  },
+
+  reset: () => {
+    sessionVersion += 1
+    listRequest += 1
+    set(usePresetStore.getInitialState())
   },
 }))

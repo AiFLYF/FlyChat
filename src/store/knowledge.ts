@@ -37,10 +37,12 @@ interface KnowledgeState {
   removeDocument: (id: string) => Promise<void>
   createWorkspace: (name: string) => Promise<WorkspaceItem>
   removeWorkspace: (id: string) => Promise<void>
+  reset: () => void
 }
 
-// 轮询中的任务 ID 记录
-const activePolls = new Set<string>()
+const activePolls = new Map<string, symbol>()
+let documentRequest = 0
+let sessionVersion = 0
 
 export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   workspaces: [],
@@ -54,17 +56,20 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   setModalOpen: (open) => set({ modalOpen: open }),
 
   setActiveWorkspaceId: (id) => {
-    set({ activeWorkspaceId: id })
-    get().loadDocuments(id)
+    activePolls.clear()
+    set({ activeWorkspaceId: id, documents: [] })
+    void get().loadDocuments(id)
   },
 
   loadAll: async () => {
+    const session = sessionVersion
     try {
       set({ loading: true })
       const [status, wsRes] = await Promise.all([
         apiFetchKnowledgeStatus().catch(() => null),
         apiFetchWorkspaces().catch(() => ({ items: [], defaultId: 'default' })),
       ])
+      if (session !== sessionVersion) return
       const current = get().activeWorkspaceId
       const activeId = wsRes.items.some((w) => w.id === current)
         ? current
@@ -77,14 +82,17 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       })
       await get().loadDocuments(activeId)
     } finally {
-      set({ loading: false })
+      if (session === sessionVersion) set({ loading: false })
     }
   },
 
   loadDocuments: async (workspaceId) => {
     const wsId = workspaceId || get().activeWorkspaceId || 'default'
+    if (wsId !== get().activeWorkspaceId) return
+    const request = ++documentRequest
     try {
       const res = await apiFetchDocuments(wsId)
+      if (request !== documentRequest || wsId !== get().activeWorkspaceId) return
       set({ documents: res.items || [] })
       // 对其中仍处于 pending/processing 的文档发起自动轮询
       for (const doc of res.items || []) {
@@ -98,8 +106,10 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   },
 
   upload: async (data) => {
+    const session = sessionVersion
     const wsId = data.workspaceId || get().activeWorkspaceId || 'default'
     const res = await apiUploadDocument({ ...data, workspaceId: wsId })
+    if (session !== sessionVersion) return res as DocumentItem
 
     // 如果重复文档命中已存在的
     if (res.duplicate && res.documentId) {
@@ -121,17 +131,19 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       updatedAt: Date.now(),
     }
 
-    set((s) => ({
-      documents: [newDoc, ...s.documents.filter((d) => d.id !== newDoc.id)],
-    }))
-
-    // 启动 800ms 轮询流水线
-    pollDocStatus(newDoc.id, set)
+    if (get().activeWorkspaceId === wsId) {
+      set((s) => ({
+        documents: [newDoc, ...s.documents.filter((d) => d.id !== newDoc.id)],
+      }))
+      pollDocStatus(newDoc.id, set)
+    }
     return newDoc
   },
 
   retry: async (id) => {
+    const session = sessionVersion
     await apiRetryDocument(id)
+    if (session !== sessionVersion || !get().documents.some((doc) => doc.id === id)) return
     set((s) => ({
       documents: s.documents.map((d) =>
         d.id === id ? { ...d, status: 'pending', stage: '已入队', progress: 5, error: undefined } : d
@@ -141,26 +153,46 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   },
 
   removeDocument: async (id) => {
+    const session = sessionVersion
+    const workspaceId = get().documents.find((doc) => doc.id === id)?.workspaceId || get().activeWorkspaceId
     await apiDeleteDocument(id)
-    set((s) => ({ documents: s.documents.filter((d) => d.id !== id) }))
+    if (session !== sessionVersion) return
+    activePolls.delete(id)
+    if (get().activeWorkspaceId === workspaceId) {
+      documentRequest += 1
+      set((s) => ({ documents: s.documents.filter((d) => d.id !== id) }))
+      void get().loadDocuments(workspaceId)
+    }
     apiFetchKnowledgeStatus()
-      .then((status) => set({ status }))
+      .then((status) => { if (session === sessionVersion) set({ status }) })
       .catch(() => {})
   },
 
   createWorkspace: async (name) => {
+    const session = sessionVersion
     const ws = await apiCreateWorkspace(name)
-    set((s) => ({ workspaces: [...s.workspaces, ws], activeWorkspaceId: ws.id }))
-    get().loadDocuments(ws.id)
+    if (session !== sessionVersion) return ws
+    set((s) => ({ workspaces: [...s.workspaces, ws] }))
+    get().setActiveWorkspaceId(ws.id)
     return ws
   },
 
   removeWorkspace: async (id) => {
+    const session = sessionVersion
     await apiDeleteWorkspace(id)
+    if (session !== sessionVersion) return
     const nextWs = get().workspaces.filter((w) => w.id !== id)
-    const nextId = nextWs[0]?.id || 'default'
-    set({ workspaces: nextWs, activeWorkspaceId: nextId })
-    get().loadDocuments(nextId)
+    set({ workspaces: nextWs })
+    if (get().activeWorkspaceId === id) {
+      get().setActiveWorkspaceId(nextWs[0]?.id || get().defaultWorkspaceId)
+    }
+  },
+
+  reset: () => {
+    sessionVersion += 1
+    documentRequest += 1
+    activePolls.clear()
+    set(useKnowledgeStore.getInitialState())
   },
 }))
 
@@ -170,15 +202,19 @@ async function pollDocStatus(
   set: (fn: (s: KnowledgeState) => Partial<KnowledgeState>) => void
 ) {
   if (activePolls.has(id)) return
-  activePolls.add(id)
+  const token = Symbol(id)
+  const session = sessionVersion
+  activePolls.set(id, token)
 
   const pollInterval = 800
   const maxAttempts = 300 // 最长等待 4 分钟
   let attempts = 0
 
   const run = async () => {
+    if (activePolls.get(id) !== token) return
     try {
       const doc = await apiFetchDocumentStatus(id)
+      if (activePolls.get(id) !== token) return
       set((s) => ({
         documents: s.documents.map((d) => (d.id === id ? doc : d)),
       }))
@@ -187,16 +223,17 @@ async function pollDocStatus(
         activePolls.delete(id)
         // 刷新一次全局 status 统计
         apiFetchKnowledgeStatus()
-          .then((status) => set(() => ({ status })))
+          .then((status) => { if (session === sessionVersion) set(() => ({ status })) })
           .catch(() => {})
         return
       }
     } catch {
-      // 网络波动继续尝试
+      // 网络波动继续尝试。
     }
 
+    if (activePolls.get(id) !== token) return
     attempts++
-    if (attempts < maxAttempts && activePolls.has(id)) {
+    if (attempts < maxAttempts) {
       setTimeout(run, pollInterval)
     } else {
       activePolls.delete(id)

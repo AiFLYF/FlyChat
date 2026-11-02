@@ -13,9 +13,10 @@ import {
   Share2,
 } from 'lucide-react'
 import { BrandIcon, BrandLogo } from './ui/BrandLogo'
-import MarkdownRenderer from './MarkdownRenderer'
+import LazyMarkdown from './LazyMarkdown'
 import { fetchShareSnapshot, type SharedConversationData } from '../api/client'
 import { useChatStore } from '../store/chat'
+import { useAuthStore } from '../store/auth'
 import { uid } from '../lib/id'
 
 interface SharedViewProps {
@@ -35,10 +36,16 @@ export default function SharedView({ shareId, onClose }: SharedViewProps) {
   const createConversation = useChatStore((s) => s.createConversation)
   const addMessage = useChatStore((s) => s.addMessage)
   const renameConversation = useChatStore((s) => s.renameConversation)
+  const hydrated = useChatStore((s) => s.hydrated)
+  const authLoading = useAuthStore((s) => s.loading)
+  const authConfig = useAuthStore((s) => s.config)
+  const authUser = useAuthStore((s) => s.user)
+  const canImport = hydrated && !authLoading && !!authConfig && (authConfig.authMode !== 'multi' || !!authUser)
 
   const loadData = async (pwd?: string) => {
     setLoading(true)
     setError(null)
+    setData(null)
     try {
       const result = await fetchShareSnapshot(shareId, pwd)
       setData(result)
@@ -47,7 +54,14 @@ export default function SharedView({ shareId, onClose }: SharedViewProps) {
       const code = (err as { code?: string })?.code
       if (code === 'share_password_required') {
         setPasswordRequired(true)
+        if (pwd !== undefined) setError('密码错误，请重新输入')
       } else {
+        // 4xx（过期/不存在）重试也没用，收起密码框直接展示错误；
+        // 网络中断或 5xx 时保留表单和已输入的密码，让用户直接再试一次。
+        const status = (err as { status?: number })?.status
+        const terminal = code === 'share_expired' ||
+          (typeof status === 'number' && status >= 400 && status < 500)
+        setPasswordRequired(pwd !== undefined && !terminal)
         setError(err instanceof Error ? err.message : '获取分享快照失败')
       }
     } finally {
@@ -71,7 +85,7 @@ export default function SharedView({ shareId, onClose }: SharedViewProps) {
   }
 
   const handleFork = () => {
-    if (!data) return
+    if (!data || !canImport) return
     const newId = createConversation()
     renameConversation(newId, data.title || '导入的分享会话')
     for (const msg of data.messages) {
@@ -133,7 +147,8 @@ export default function SharedView({ shareId, onClose }: SharedViewProps) {
 
           <button
             onClick={handleFork}
-            disabled={!data || forked}
+            disabled={!data || forked || !canImport}
+            title={!canImport ? '请先返回工作台完成登录' : undefined}
             className="press flex h-8 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-medium text-on-accent shadow-1 hover:brightness-110 disabled:opacity-50"
           >
             {forked ? (
@@ -183,8 +198,8 @@ export default function SharedView({ shareId, onClose }: SharedViewProps) {
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
-                  if (passwordInput.trim()) {
-                    loadData(passwordInput.trim())
+                  if (passwordInput) {
+                    void loadData(passwordInput)
                   }
                 }}
                 className="mt-6 space-y-3"
@@ -197,12 +212,20 @@ export default function SharedView({ shareId, onClose }: SharedViewProps) {
                   <input
                     type="password"
                     placeholder="输入分享密码"
+                    aria-label="分享密码"
+                    aria-invalid={!!error}
+                    aria-describedby={error ? 'share-password-error' : undefined}
                     value={passwordInput}
                     onChange={(e) => setPasswordInput(e.target.value)}
                     className="h-10 w-full rounded-xl border border-rule bg-canvas pl-9 pr-3 text-xs text-ink-1 placeholder:text-ink-3 focus:border-accent focus:outline-none"
                     autoFocus
                   />
                 </div>
+                {error && (
+                  <p id="share-password-error" role="alert" className="text-xs text-ink-2">
+                    {error}
+                  </p>
+                )}
                 <button
                   type="submit"
                   className="press flex h-10 w-full items-center justify-center rounded-xl bg-accent text-xs font-medium text-on-accent hover:brightness-110"
@@ -221,12 +244,20 @@ export default function SharedView({ shareId, onClose }: SharedViewProps) {
               </div>
               <h2 className="mt-4 text-lg font-semibold text-ink-1">无法加载分享内容</h2>
               <p className="mt-1.5 text-xs text-ink-3">{error}</p>
-              <button
-                onClick={onClose}
-                className="press mt-6 inline-flex h-9 items-center justify-center rounded-xl bg-accent px-4 text-xs font-medium text-on-accent"
-              >
-                返回主应用
-              </button>
+              <div className="mt-6 flex justify-center gap-2">
+                <button
+                  onClick={() => void loadData()}
+                  className="press inline-flex h-9 items-center justify-center rounded-xl border border-rule px-4 text-xs text-ink-2 hover:bg-hover hover:text-ink-1"
+                >
+                  重试
+                </button>
+                <button
+                  onClick={onClose}
+                  className="press inline-flex h-9 items-center justify-center rounded-xl bg-accent px-4 text-xs font-medium text-on-accent"
+                >
+                  返回主应用
+                </button>
+              </div>
             </div>
           )}
 
@@ -301,7 +332,7 @@ export default function SharedView({ shareId, onClose }: SharedViewProps) {
                           </details>
                         )}
                         <div className="prose-chat leading-relaxed">
-                          <MarkdownRenderer content={m.content} />
+                          <LazyMarkdown content={m.content} />
                         </div>
                       </div>
                     </div>

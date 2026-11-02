@@ -19,19 +19,20 @@ import {
 import { useChatStore, uid } from '../store/chat'
 import { useSettingsOpen } from './openPanels'
 import { useComposer } from '../store/composer'
+import { useAuthStore } from '../store/auth'
 import {
   completeOnce,
   fetchProviders,
   generateServerTitle,
   generateTaskSuggestions,
   streamChat,
-  syncConversationToServer,
   type ChatMessagePayload,
 } from '../api/client'
 import { downloadJson, downloadText, safeFileName } from '../lib/download'
 import { exportNodeAsImage } from '../lib/exportImage'
 import { flushPersist, pausePersist, resumePersist } from '../lib/db'
-import { staggerDelay, useParallax } from '../lib/motion'
+import { queueConversationSync } from '../lib/serverSync'
+import { prefersReducedMotion, staggerDelay, useParallax } from '../lib/motion'
 import { useDismiss } from '../lib/useDismiss'
 import { usePresence } from '../lib/usePresence'
 import { MenuPanel, MenuItem } from './ui/Menu'
@@ -46,6 +47,10 @@ import { BrandIcon } from './ui/BrandLogo'
 import { ConstellationHero } from './ui/BrandGraphic'
 import { showToast } from './ui/Toast'
 import type { Assistant, Attachment, Conversation, Message, MessageVariant, ProviderInfo } from '../types'
+
+/** 工具执行进度提示（「正在…」）：工具结束就该消失，不能一直挂在聊天顶部 */
+const isProgressNotice = (text: string) =>
+  /^正在(联网搜索|读取网页|获取当前时间|调用工具)/.test(text)
 
 /** 消息流顶部常驻展示与编辑当前智能体系统提示词 (System Prompt) */
 function SystemPromptBanner({
@@ -240,7 +245,6 @@ export default function ChatWindow() {
   const appendGeneratedImages = useChatStore((s) => s.appendGeneratedImages)
   const setMessageSuggestions = useChatStore((s) => s.setMessageSuggestions)
   const assistants = useChatStore((s) => s.assistants)
-  const updateSettings = useChatStore((s) => s.updateSettings)
   const setConversationSystemPrompt = useChatStore((s) => s.setConversationSystemPrompt)
 
   const setShowSettings = useSettingsOpen((s) => s.setOpen)
@@ -263,6 +267,18 @@ export default function ChatWindow() {
   const [scrolled, setScrolled] = useState(false)
 
   const abortRef = useRef<AbortController[]>([])
+  const mountedRef = useRef(false)
+  useEffect(() => {
+    mountedRef.current = true
+    const unsubscribe = useAuthStore.subscribe((state) => {
+      if (state.loading) abortRef.current.forEach((controller) => controller.abort())
+    })
+    return () => {
+      unsubscribe()
+      mountedRef.current = false
+      abortRef.current.forEach((controller) => controller.abort())
+    }
+  }, [])
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const captureRef = useRef<HTMLDivElement>(null)
@@ -313,6 +329,7 @@ export default function ChatWindow() {
     setProvidersState('loading')
     fetchProviders()
       .then(({ providers: list, webSearch }) => {
+        if (!mountedRef.current) return
         setProviders(list)
         setWebSearchAvailable(webSearch)
         setProvidersState('ready')
@@ -329,6 +346,7 @@ export default function ChatWindow() {
         if (Object.keys(patch).length) state.updateSettings(patch)
       })
       .catch(() => {
+        if (!mountedRef.current) return
         if (attempt < 2) {
           retryTimer.current = setTimeout(() => loadProviders(attempt + 1), 800 * (attempt + 1))
           return
@@ -364,10 +382,18 @@ export default function ChatWindow() {
     switchComposer(activeId ?? 'new')
   }, [activeId, switchComposer])
 
+  // 换会话等于换了一屏内容：上一个会话「用户往上翻了」的滚动状态不能带过来
+  useEffect(() => {
+    pinnedRef.current = true
+    setAtBottom(true)
+  }, [activeId])
+
   // 智能滚动：仅在停留底部附近时跟随
   useEffect(() => {
     if (!pinnedRef.current) return
-    bottomRef.current?.scrollIntoView({ behavior: streaming ? 'auto' : 'smooth' })
+    bottomRef.current?.scrollIntoView({
+      behavior: streaming || prefersReducedMotion() ? 'auto' : 'smooth',
+    })
   }, [active?.messages, activeId, streaming])
 
   const onScroll = useCallback(() => {
@@ -382,7 +408,7 @@ export default function ChatWindow() {
   const scrollToBottom = useCallback(() => {
     pinnedRef.current = true
     setAtBottom(true)
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    bottomRef.current?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
   }, [])
 
   const ready =
@@ -470,6 +496,33 @@ export default function ChatWindow() {
       const controller = new AbortController()
       abortRef.current.push(controller)
 
+      // 流式文本按帧合并：逐 token 写 store 会让整个消息列表每 token 重渲染一次，
+      // 长回答时 Markdown 解析会把主线程占满。这里最多每帧提交一次增量。
+      let pendingContent = ''
+      let pendingReasoning = ''
+      let frame = 0
+      const flush = () => {
+        frame = 0
+        if (pendingContent) {
+          appendToMessage(conversationId, assistantId, pendingContent)
+          pendingContent = ''
+        }
+        if (pendingReasoning) {
+          appendReasoning(conversationId, assistantId, pendingReasoning)
+          pendingReasoning = ''
+        }
+      }
+      const scheduleFlush = () => {
+        if (!frame) frame = requestAnimationFrame(flush)
+      }
+      const flushNow = () => {
+        if (frame) {
+          cancelAnimationFrame(frame)
+          frame = 0
+        }
+        flush()
+      }
+
       try {
         const activePreset = usePresetStore.getState().presets.find((p) => p.id === usePresetStore.getState().activePresetId)
         // 只有「确实会用得上知识库」时才带 workspaceId：
@@ -500,8 +553,14 @@ export default function ChatWindow() {
             workspaceId: activeWorkspaceId,
             documentIds: conversation?.documentIds,
             conversationId,
-            onDelta: (text) => appendToMessage(conversationId, assistantId, text),
-            onReasoning: (text) => appendReasoning(conversationId, assistantId, text),
+            onDelta: (text) => {
+              pendingContent += text
+              scheduleFlush()
+            },
+            onReasoning: (text) => {
+              pendingReasoning += text
+              scheduleFlush()
+            },
             onCitations: (citations) => updateMessage(conversationId, assistantId, { citations }),
             onSources: (sources) => updateMessage(conversationId, assistantId, { sources }),
             onImage: (evt) => appendGeneratedImages(conversationId, assistantId, evt.images),
@@ -528,6 +587,7 @@ export default function ChatWindow() {
                 ? existing.map((x, i) => (i === idx ? { ...x, ...tr } : x))
                 : [...existing, tr]
               updateMessage(conversationId, assistantId, { toolResults: updated })
+              setNotice((n) => (isProgressNotice(n) ? '' : n))
             },
             onModelSwitch: (modelSwitch) => updateMessage(conversationId, assistantId, { modelSwitch }),
             onUsage: (usage) => updateMessage(conversationId, assistantId, { usage }),
@@ -536,6 +596,8 @@ export default function ChatWindow() {
           },
           controller.signal
         )
+        flushNow()
+        if (!mountedRef.current || controller.signal.aborted) return
         const durationMs = Date.now() - startTime
         const finishedMsg = useChatStore
           .getState()
@@ -567,20 +629,25 @@ export default function ChatWindow() {
 
         // 自动拉取追问建议 (Q-2026-10-19-06)
         if (!controller.signal.aborted && finishedMsg?.content) {
+          const suggestionController = new AbortController()
+          abortRef.current.push(suggestionController)
           generateTaskSuggestions({
             messages: [
               ...history.map((m) => ({ role: m.role, content: m.content })),
               { role: 'assistant', content: finishedMsg.content },
             ],
-          })
+          }, suggestionController.signal)
             .then((res) => {
-              if (res.suggestions && res.suggestions.length > 0) {
+              if (mountedRef.current && !suggestionController.signal.aborted && res.suggestions?.length) {
                 setMessageSuggestions(conversationId, assistantId, res.suggestions)
               }
             })
             .catch(() => {})
+            .finally(() => { abortRef.current = abortRef.current.filter((c) => c !== suggestionController) })
         }
       } catch (err) {
+        if (!mountedRef.current) return
+        flushNow()
         const aborted =
           controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')
         const current = useChatStore
@@ -602,13 +669,17 @@ export default function ChatWindow() {
           })
         }
       } finally {
-        markStreaming(assistantId, false)
-        // 流结束：恢复持久化并把最新状态写入 IndexedDB
+        if (mountedRef.current) {
+          markStreaming(assistantId, false)
+          // 中止 / 出错 / 正常结束都清掉工具进度提示；警告类 notice 保留
+          setNotice((n) => (isProgressNotice(n) ? '' : n))
+        }
         resumePersist()
         abortRef.current = abortRef.current.filter((c) => c !== controller)
-        // 静默向服务端同步（离线优先，不阻断前台）
         const finishedConv = useChatStore.getState().conversations.find((c) => c.id === conversationId)
-        if (finishedConv) void syncConversationToServer(finishedConv)
+        if (finishedConv && mountedRef.current && !useAuthStore.getState().loading) {
+          queueConversationSync(finishedConv)
+        }
       }
     },
     [settings, addMessage, appendToMessage, appendReasoning, updateMessage]
@@ -617,44 +688,43 @@ export default function ChatWindow() {
   /** 用模型给会话起一个简短标题（优先走服务端高性能 /api/title 接口，降级走客户端补全） */
   const maybeGenerateTitle = useCallback(
     async (conversationId: string) => {
-      if (titledRef.current.has(conversationId)) return
+      if (!mountedRef.current || useAuthStore.getState().loading || titledRef.current.has(conversationId)) return
       const conv = useChatStore.getState().conversations.find((c) => c.id === conversationId)
       if (!conv) return
       const firstUser = conv.messages.find((m) => m.role === 'user' && m.content)
       if (!firstUser) return
       titledRef.current.add(conversationId)
-
-      // 1. 优先尝试服务端专用 /api/title 接口
+      const controller = new AbortController()
+      abortRef.current.push(controller)
       try {
-        const serverTitle = await generateServerTitle(
-          conv.messages.map((m) => ({ role: m.role, content: m.content })),
-          settings.provider,
-          settings.model
-        )
-        if (serverTitle && serverTitle !== '新对话') {
-          renameConversation(conversationId, serverTitle)
-          return
+        let title = ''
+        try {
+          title = await generateServerTitle(
+            conv.messages.map((m) => ({ role: m.role, content: m.content })),
+            settings.provider,
+            settings.model,
+            controller.signal
+          )
+        } catch {
+          if (controller.signal.aborted) return
         }
-      } catch {
-        /* 服务端未响应则回退到客户端模型直连补全 */
-      }
-
-      // 2. 客户端补全降级兜底
-      try {
-        const raw = await completeOnce({
-          settings: { provider: settings.provider, model: settings.model, temperature: 0.3 },
-          messages: [
-            {
+        if (!mountedRef.current || controller.signal.aborted) return
+        if (!title || title === '新对话') {
+          const raw = await completeOnce({
+            settings: { provider: settings.provider, model: settings.model, temperature: 0.3 },
+            messages: [{
               role: 'user',
               content: `请为下面这段对话起一个不超过 12 个字的简短标题，只输出标题本身，不要引号、不要标点：\n\n${firstUser.content.slice(0, 400)}`,
-            },
-          ],
-          maxTokens: 32,
-        })
-        const clean = raw.replace(/["'「」『』\n\r]/g, '').trim().slice(0, 20)
-        if (clean) renameConversation(conversationId, clean)
+            }],
+            maxTokens: 32,
+          }, controller.signal)
+          title = raw.replace(/["'「」『』\n\r]/g, '').trim().slice(0, 20)
+        }
+        if (title && mountedRef.current && !controller.signal.aborted) renameConversation(conversationId, title)
       } catch {
         /* 标题生成失败不影响主流程 */
+      } finally {
+        abortRef.current = abortRef.current.filter((c) => c !== controller)
       }
     },
     [settings.provider, settings.model, renameConversation]
@@ -685,7 +755,7 @@ export default function ChatWindow() {
           const assistants = conv?.messages.filter((m) => m.role === 'assistant') ?? []
           const lastAssistant = assistants[assistants.length - 1]
           const userCount = conv?.messages.filter((m) => m.role === 'user').length ?? 0
-          if (userCount <= 1 && lastAssistant && !lastAssistant.error) {
+          if (mountedRef.current && userCount <= 1 && lastAssistant?.status === 'done' && lastAssistant.content.trim()) {
             await maybeGenerateTitle(convId)
           }
         })
@@ -712,63 +782,113 @@ export default function ChatWindow() {
 
   /** 重新生成最后一条回答（保留原有回答作为多版本变体） */
   const handleRegenerate = useCallback(() => {
-    if (!active || streaming) return
-    const msgs = active.messages
+    if (streaming) return
+    const state = useChatStore.getState()
+    const conv = state.conversations.find((c) => c.id === state.activeId)
+    if (!conv) return
+    const msgs = conv.messages
     const lastUserIdx = [...msgs].map((m) => m.role).lastIndexOf('user')
     if (lastUserIdx < 0) return
     const lastUser = msgs[lastUserIdx]
-    const existingAssistant = msgs.slice(lastUserIdx + 1).find((m) => m.role === 'assistant')
-    const priorVariants: MessageVariant[] =
-      existingAssistant?.variants && existingAssistant.variants.length > 0
-        ? [...existingAssistant.variants]
-        : existingAssistant && existingAssistant.content
-        ? [
-            {
-              id: 'v-' + existingAssistant.createdAt,
-              content: existingAssistant.content,
-              reasoning: existingAssistant.reasoning,
-              reasoningTimeMs: existingAssistant.reasoningTimeMs,
-              model: existingAssistant.model,
-              citations: existingAssistant.citations,
-              createdAt: existingAssistant.createdAt,
-              usage: existingAssistant.usage,
-            },
-          ]
-        : []
+    const existingAssistants = msgs.slice(lastUserIdx + 1).filter((m) => m.role === 'assistant')
+    const variantsOf = (message: Message | undefined): MessageVariant[] => {
+      if (message?.variants?.length) return [...message.variants]
+      if (!message?.content) return []
+      return [
+        {
+          id: 'v-' + message.createdAt,
+          content: message.content,
+          reasoning: message.reasoning,
+          reasoningTimeMs: message.reasoningTimeMs,
+          model: message.model,
+          citations: message.citations,
+          createdAt: message.createdAt,
+          usage: message.usage,
+        },
+      ]
+    }
+    // 对比模式里每一列是不同模型的回答：只能继承「同一个模型」的历史版本，
+    // 否则重新生成后，B 模型的版本列表里会混进 A 模型的内容。
+    const priorFor = (target: Target) => {
+      const same = existingAssistants.find((m) => m.model === target.model)
+      const source = same || (existingAssistants.length === 1 ? existingAssistants[0] : undefined)
+      return variantsOf(source)
+    }
 
-    removeMessagesAfter(active.id, lastUser.id)
-    const conv = useChatStore.getState().conversations.find((c) => c.id === active.id)
-    if (!conv) return
-    const history = buildHistory({ ...conv, messages: conv.messages.slice(0, lastUserIdx + 1) })
+    removeMessagesAfter(conv.id, lastUser.id)
+    const fresh = useChatStore.getState().conversations.find((c) => c.id === conv.id)
+    if (!fresh) return
+    const history = buildHistory({ ...fresh, messages: fresh.messages.slice(0, lastUserIdx + 1) })
     const groupId = targets.length > 1 ? uid() : undefined
     void Promise.all(
-      targets.map((t) => runCompletion(active.id, history, t, groupId, priorVariants))
+      targets.map((t) => runCompletion(conv.id, history, t, groupId, priorFor(t)))
     ).catch(() => {})
-  }, [active, streaming, removeMessagesAfter, buildHistory, targets, runCompletion])
+  }, [streaming, removeMessagesAfter, buildHistory, targets, runCompletion])
 
   /** 编辑用户消息并重新发送 */
   const handleEdit = useCallback(
     (messageId: string, newContent: string) => {
-      if (!active || streaming) return
-      updateMessage(active.id, messageId, { content: newContent })
-      removeMessagesAfter(active.id, messageId)
-      const conv = useChatStore.getState().conversations.find((c) => c.id === active.id)
+      if (streaming) return
+      const state = useChatStore.getState()
+      const conv = state.conversations.find((c) => c.id === state.activeId)
       if (!conv) return
-      const idx = conv.messages.findIndex((m) => m.id === messageId)
-      const history = buildHistory({ ...conv, messages: conv.messages.slice(0, idx + 1) })
+      updateMessage(conv.id, messageId, { content: newContent })
+      removeMessagesAfter(conv.id, messageId)
+      const fresh = useChatStore.getState().conversations.find((c) => c.id === conv.id)
+      if (!fresh) return
+      const idx = fresh.messages.findIndex((m) => m.id === messageId)
+      const history = buildHistory({ ...fresh, messages: fresh.messages.slice(0, idx + 1) })
       const groupId = targets.length > 1 ? uid() : undefined
-      void Promise.all(targets.map((t) => runCompletion(active.id, history, t, groupId))).catch(() => {})
+      void Promise.all(targets.map((t) => runCompletion(conv.id, history, t, groupId))).catch(() => {})
     },
-    [active, streaming, updateMessage, removeMessagesAfter, buildHistory, targets, runCompletion]
+    [streaming, updateMessage, removeMessagesAfter, buildHistory, targets, runCompletion]
   )
 
+  // 传给 MessageItem 的回调必须保持稳定引用，否则 memo 每帧都会失效：
+  // 流式输出时 `active` 每帧都是新对象，闭包它的回调跟着换，整列消息全部重渲染。
   const handleDelete = useCallback(
     (messageId: string) => {
-      if (!active) return
-      removeMessage(active.id, messageId)
+      const id = useChatStore.getState().activeId
+      if (id) removeMessage(id, messageId)
     },
-    [active, removeMessage]
+    [removeMessage]
   )
+
+  const handleUpdateContent = useCallback(
+    (messageId: string, content: string) => {
+      const id = useChatStore.getState().activeId
+      if (id) updateMessage(id, messageId, { content })
+    },
+    [updateMessage]
+  )
+
+  const handleFeedback = useCallback(
+    (messageId: string, feedback: 'like' | 'dislike' | null) => {
+      const id = useChatStore.getState().activeId
+      if (id) updateMessage(id, messageId, { feedback })
+    },
+    [updateMessage]
+  )
+
+  const handleShare = useCallback((message: Message) => setShareTarget(message), [])
+
+  const handleToggleStar = useCallback(
+    (messageId: string) => {
+      const id = useChatStore.getState().activeId
+      if (id) toggleMessageStar(id, messageId)
+    },
+    [toggleMessageStar]
+  )
+
+  const handleSwitchVariant = useCallback(
+    (messageId: string, index: number) => {
+      const id = useChatStore.getState().activeId
+      if (id) switchMessageVariant(id, messageId, index)
+    },
+    [switchMessageVariant]
+  )
+
+  const handlePickSuggestion = useCallback((text: string) => handleSend(text, []), [handleSend])
 
   const handleExportMarkdown = useCallback(() => {
     if (!active) return
@@ -821,6 +941,15 @@ export default function ChatWindow() {
   const renderFrom = Math.max(0, units.length - MESSAGE_PAGE * (extraPages + 1))
   const renderedUnits = useMemo(() => units.slice(renderFrom), [units, renderFrom])
   const lastUnitIndex = renderedUnits.length - 1
+  /** 最后一条助手消息所在的渲染单元：逐条 slice().some() 在流式期间是 O(n²) */
+  const lastAssistantUnitId = useMemo(() => {
+    for (let i = renderedUnits.length - 1; i >= 0; i -= 1) {
+      if (renderedUnits[i].items.some((it) => it.message.role === 'assistant')) {
+        return renderedUnits[i].id
+      }
+    }
+    return null
+  }, [renderedUnits])
   /** 视口附近才播放逐条入场：长会话避免上百个动画同时触发 */
   const enterFrom = Math.max(0, renderedUnits.length - 4)
 
@@ -1128,7 +1257,7 @@ export default function ChatWindow() {
                       if (active?.id) {
                         setConversationSystemPrompt(active.id, newPrompt)
                       }
-                      updateSettings({ systemPrompt: newPrompt })
+                      // 只改会话级指令，不能覆盖设置里的全局默认指令
                       showToast('已更新角色系统提示词', 'success')
                     }}
                   />
@@ -1169,10 +1298,10 @@ export default function ChatWindow() {
                                 enter={enter}
                                 onRegenerate={handleRegenerate}
                                 onDelete={handleDelete}
-                                onShare={(msg) => setShareTarget(msg)}
-                                onToggleStar={(messageId) => active && toggleMessageStar(active.id, messageId)}
-                                onSwitchVariant={(messageId, idx) => active && switchMessageVariant(active.id, messageId, idx)}
-                                onPickSuggestion={(s) => handleSend(s, [])}
+                                onShare={handleShare}
+                                onToggleStar={handleToggleStar}
+                                onSwitchVariant={handleSwitchVariant}
+                                onPickSuggestion={handlePickSuggestion}
                               />
                             </div>
                           ))}
@@ -1181,9 +1310,7 @@ export default function ChatWindow() {
                     )
                   }
                   const m = unit.items[0].message
-                  const isLastAssistant =
-                    m.role === 'assistant' &&
-                    !active?.messages.slice(unit.items[0].index + 1).some((x) => x.role === 'assistant')
+                  const isLastAssistant = m.role === 'assistant' && unit.id === lastAssistantUnitId
                   return (
                     <MessageItem
                       key={m.id}
@@ -1193,13 +1320,13 @@ export default function ChatWindow() {
                       enter={enter}
                       onRegenerate={handleRegenerate}
                       onEdit={m.role === 'user' ? handleEdit : undefined}
-                      onUpdateContent={(messageId, content) => active && updateMessage(active.id, messageId, { content })}
-                      onFeedback={(messageId, feedback) => active && updateMessage(active.id, messageId, { feedback })}
+                      onUpdateContent={handleUpdateContent}
+                      onFeedback={handleFeedback}
                       onDelete={handleDelete}
-                      onShare={(msg) => setShareTarget(msg)}
-                      onToggleStar={(messageId) => active && toggleMessageStar(active.id, messageId)}
-                      onSwitchVariant={(messageId, idx) => active && switchMessageVariant(active.id, messageId, idx)}
-                      onPickSuggestion={(s) => handleSend(s, [])}
+                      onShare={handleShare}
+                      onToggleStar={handleToggleStar}
+                      onSwitchVariant={handleSwitchVariant}
+                      onPickSuggestion={handlePickSuggestion}
                     />
                   )
                 })}

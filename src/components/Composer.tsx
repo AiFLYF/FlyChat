@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUp, Brain, Globe, Mic, MicOff, Paperclip, Square, Wrench, X } from 'lucide-react'
 import { useComposer } from '../store/composer'
 import { useChatStore } from '../store/chat'
@@ -74,7 +74,7 @@ export default function Composer({
   const clear = useComposer((s) => s.clear)
   const focusToken = useComposer((s) => s.focusToken)
   const attachments = useComposer((s) => s.attachments)
-  const addAttachment = useComposer((s) => s.addAttachment)
+  const activeKey = useComposer((s) => s.activeKey)
   const removeAttachment = useComposer((s) => s.removeAttachment)
 
   const settings = useChatStore((s) => s.settings)
@@ -82,7 +82,16 @@ export default function Composer({
 
   const fileRef = useRef<HTMLInputElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
-  const [uploading, setUploading] = useState(false)
+  const pendingRef = useRef(new Map<symbol, { key: string; remaining: number }>())
+  const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({})
+  const uploading = (pendingCounts[activeKey] ?? 0) > 0
+  const refreshPending = useCallback(() => {
+    const counts: Record<string, number> = {}
+    for (const job of pendingRef.current.values()) {
+      counts[job.key] = (counts[job.key] ?? 0) + job.remaining
+    }
+    setPendingCounts(counts)
+  }, [])
   const [error, setError] = useState('')
   const [dragOver, setDragOver] = useState(false)
   const [listening, setListening] = useState(false)
@@ -114,27 +123,57 @@ export default function Composer({
     }
   }
 
-  // 组件卸载时停止录音
   useEffect(() => {
+    const unsubscribe = useComposer.subscribe((next, previous) => {
+      let changed = false
+      for (const [token, job] of pendingRef.current) {
+        // 只有整个草稿被删除才取消解析；清空输入框或删掉最后一个附件不能取消，
+        // 否则还在读的那批文件会被静默丢弃，用户看到的就是「选了文件却没加上」。
+        const removed = job.key !== next.activeKey && previous.drafts[job.key] && !next.drafts[job.key]
+        if (removed) {
+          pendingRef.current.delete(token)
+          changed = true
+        }
+      }
+      if (changed) refreshPending()
+    })
     return () => {
+      unsubscribe()
+      pendingRef.current.clear()
       recognitionRef.current?.stop()
     }
-  }, [])
+  }, [refreshPending])
+
+  useEffect(() => setError(''), [activeKey])
 
   const ingestFiles = async (files: FileList | File[]) => {
     const list = Array.from(files)
-    if (!list.length) return
+    if (!list.length || disabled) return
+    const key = useComposer.getState().activeKey
+    const token = Symbol('attachment-batch')
+    const job = { key, remaining: list.length }
+    pendingRef.current.set(token, job)
     setError('')
-    setUploading(true)
+    refreshPending()
     try {
       for (const file of list) {
         const att = await fileToAttachment(file)
-        addAttachment(att)
+        if (!pendingRef.current.has(token)) return
+        useComposer.setState((state) => {
+          if (state.activeKey === key) return { attachments: [...state.attachments, att] }
+          const draft = state.drafts[key]
+          if (!draft) return state
+          return { drafts: { ...state.drafts, [key]: { ...draft, attachments: [...draft.attachments, att] } } }
+        })
+        job.remaining -= 1
+        refreshPending()
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (pendingRef.current.has(token) && useComposer.getState().activeKey === key) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
     } finally {
-      setUploading(false)
+      if (pendingRef.current.delete(token)) refreshPending()
     }
   }
 
@@ -154,12 +193,13 @@ export default function Composer({
 
   const submit = () => {
     const value = text.trim()
-    if ((!value && attachments.length === 0) || streaming || disabled) return
+    const pending = [...pendingRef.current.values()].some((job) => job.key === activeKey && job.remaining > 0)
+    if ((!value && attachments.length === 0) || streaming || disabled || pending) return
     onSend(value, attachments)
     clear()
   }
 
-  const canSend = (!!text.trim() || attachments.length > 0) && !streaming && !disabled
+  const canSend = (!!text.trim() || attachments.length > 0) && !streaming && !disabled && !uploading
   const placeholder = disabled
     ? disabledHint ?? '暂不可用'
     : variant === 'hero'

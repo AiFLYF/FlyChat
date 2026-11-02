@@ -31,12 +31,23 @@ export default defineConfig({
     emptyOutDir: false,
     rollupOptions: {
       output: {
-        manualChunks: {
-          react: ['react', 'react-dom'],
+        // 只按包名精确分组，不吞依赖与共享的 CJS interop 辅助函数：
+        // 对象写法会把 helper 也塞进 markdown chunk，入口再静态引用 helper，
+        // 就等于把整个 markdown chunk 重新变成首屏阻塞资源，React.lazy 白做。
+        onlyExplicitManualChunks: true,
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          if (/[\\/]node_modules[\\/](react|react-dom)[\\/]/.test(id)) return 'react'
           // katex 必须与 markdown 同组：rehype-katex 与 hast 工具互相引用，
           // 拆成两个 chunk 会形成跨 chunk 循环初始化，生产环境直接
           // `Cannot access 'v1' before initialization` 白屏（dev 不触发）。
-          markdown: ['react-markdown', 'remark-gfm', 'remark-math', 'rehype-highlight', 'katex', 'rehype-katex'],
+          if (
+            /[\\/]node_modules[\\/](react-markdown|remark-gfm|remark-math|rehype-highlight|rehype-katex|katex)[\\/]/.test(
+              id
+            )
+          ) {
+            return 'markdown'
+          }
         },
       },
     },

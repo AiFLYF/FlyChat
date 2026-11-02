@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Brain, Check, ChevronRight, Copy, Sparkles } from 'lucide-react'
 import { showToast } from './ui/Toast'
-import MarkdownRenderer from './MarkdownRenderer'
+import LazyMarkdown from './LazyMarkdown'
 
 /**
  * SOTA 级思考过程折叠块（DeepSeek-R1 / OpenAI o1/o3 / Claude Thinking）
@@ -152,7 +152,7 @@ export default function ReasoningBlock({
         <div className="overflow-hidden">
           <div className="border-t border-rule/50 bg-hover-soft/60 px-3.5 py-3">
             <div className="prose-chat border-l-2 border-purple-500/30 pl-3 text-xs leading-relaxed text-ink-2/90">
-              <MarkdownRenderer content={text} />
+              <LazyMarkdown content={text} />
             </div>
             {streaming && (
               <div className="mt-2 flex items-center gap-1.5 text-[11px] text-accent">
