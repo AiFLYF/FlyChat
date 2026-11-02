@@ -20,6 +20,7 @@
     "test:watch": "node --test --watch \"server/test/*.test.js\"",
     "smoke:api": "node scripts/smoke-api.mjs",
     "smoke": "node scripts/smoke-ui.mjs",
+    "smoke:anim": "node scripts/anim-check.mjs",
     "mock:flash": "node scripts/mock-flash.mjs",
     "audit:ui": "python scripts/audit-ui.py",
     "test:e2e": "node scripts/e2e/run-all.mjs"

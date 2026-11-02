@@ -85,6 +85,11 @@ export function classifyUpstreamError(status, detail) {
   const has = (re) => re.test(text)
 
   if (s === 401 || s === 403) {
+    // 聚合网关常见形态：令牌本身有效，但无权访问这个模型（403 + 模型字样）。
+    // 不归进 auth_failed——否则用户会被误导去换密钥，实际该换的是模型或渠道权限。
+    if (s === 403 && has(/无权访问模型|无权限使用|model.{0,24}(not allowed|forbidden|not permitted|no access)/i)) {
+      return { code: 'model_forbidden', transient: false, hint: '当前密钥无权访问该模型，请更换模型或确认渠道权限' }
+    }
     return { code: 'auth_failed', transient: false, hint: '密钥无效或无权限，请检查服务端配置' }
   }
   if (s === 429 || s === 402) {

@@ -76,6 +76,14 @@ test('错误归类：各家错误归一成可执行的 code 与提示', () => {
   assert.equal(classifyUpstreamError(401, 'invalid api key').code, 'auth_failed')
   assert.equal(classifyUpstreamError(403, 'forbidden').transient, false)
 
+  // 令牌有效但无权访问该模型（聚合网关实测形态）：不能误导用户去换密钥
+  const modelDenied = classifyUpstreamError(403, '该令牌无权访问模型 qwen-not-exist-9 (request id: xxx)')
+  assert.equal(modelDenied.code, 'model_forbidden')
+  assert.equal(modelDenied.transient, false)
+  assert.match(modelDenied.hint, /模型/)
+  // 普通 403 仍然是鉴权类
+  assert.equal(classifyUpstreamError(403, 'forbidden').code, 'auth_failed')
+
   const quota = classifyUpstreamError(429, 'insufficient_quota')
   assert.equal(quota.code, 'quota_exceeded')
   assert.equal(quota.transient, false)
