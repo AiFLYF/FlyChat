@@ -59,6 +59,11 @@ export function claimOwnerlessWorkspaces(userId) {
     .run(String(userId), now()).changes
 }
 
+/** 「顺手记住的资源 id」用得上：资源不存在或不属于当前用户时返回 false */
+export function workspaceExists(id, { userId = null } = {}) {
+  return !!id && !!workspaceRow(id, userId)
+}
+
 export function listWorkspaces({ userId = null } = {}) {
   ensureDefaultWorkspace(userId)
   const db = getDb()
@@ -232,10 +237,15 @@ export function createDocument(input, { userId = null } = {}) {
 }
 
 /** 更新流水线状态（进度百分比与阶段文案给前端展示） */
-export function updateDocumentStatus(id, { status, stage, progress, error, chunkCount, attempts }) {
+export function updateDocumentStatus(id, { status, stage, progress, error, chunkCount, attempts, size }) {
   const db = getDb()
   const sets = []
   const params = []
+  if (size !== undefined) {
+    // 服务端实测的落盘字节数：客户端传的 size 只是展示用的提示，不能作为配额依据
+    sets.push('size = ?')
+    params.push(Math.max(0, Math.round(Number(size) || 0)))
+  }
   if (status !== undefined) {
     sets.push('status = ?')
     params.push(String(status))
@@ -334,6 +344,19 @@ export function deleteDocument(id, { userId = null } = {}) {
  * `documents` 只算可用（ready）的，另外单独给出处理中与失败的数量——
  * 否则「文档 12 篇」里混着 5 篇失败的和 2 篇还在跑的，用户会以为检索坏了。
  */
+/** 单个工作区的配额用量：文档数 + 源文件总字节（含处理中与失败的，磁盘上都还占着） */
+export function workspaceUsage(workspaceId, { userId = null } = {}) {
+  const db = getDb()
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS documents, COALESCE(SUM(d.size), 0) AS bytes
+       FROM documents d JOIN workspaces w ON w.id = d.workspace_id
+       WHERE d.workspace_id = ?${userId ? ' AND w.user_id = ?' : ''}`
+    )
+    .get(workspaceId, ...(userId ? [String(userId)] : []))
+  return { documents: row?.documents ?? 0, bytes: row?.bytes ?? 0 }
+}
+
 export function documentStats({ userId = null } = {}) {
   const db = getDb()
   const row = db
@@ -355,31 +378,39 @@ export function documentStats({ userId = null } = {}) {
   }
 }
 
-/**
- * 关键词得分：查询词在块里出现的比例。
- * 没有分词器也能用——中文按 2 字滑窗、英文按空格切，够 hybrid 检索用了。
- */
-function keywordScore(text, query) {
-  const haystack = String(text || '').toLowerCase()
-  if (!haystack) return 0
-  const terms = new Set()
-  const lowered = String(query || '').toLowerCase()
+const QUERY_SPLIT_RE = /[\s,，。、;；:：!！?？()（）\[\]{}"'“”‘’]+/
 
-  for (const token of lowered.split(/[\s,，。、;；:：!！?？()（）\[\]{}"'“”‘’]+/)) {
-    if (!token) continue
+/**
+ * 查询只解析一次：每个块都重新 split / 构造 Set / 小写化查询，
+ * 在万级块的知识库里就是纯浪费。
+ *
+ * 这里产出的三种口径与原先 keywordScore / phraseScore / headingScore 完全一致：
+ * 关键词按 2 字滑窗、硬词按大小写规则、章节名按 token 命中比例。
+ */
+function analyzeQuery(query) {
+  const lowered = String(query || '').toLowerCase()
+  const tokens = lowered.split(QUERY_SPLIT_RE).filter(Boolean)
+
+  const keywordSet = new Set()
+  for (const token of tokens) {
     if (/[\u4e00-\u9fff]/.test(token)) {
       // 中文：2 字滑窗，覆盖「向量数据库」→ 向量/量数/数据/据库
-      if (token.length <= 2) terms.add(token)
-      else for (let i = 0; i + 2 <= token.length; i += 1) terms.add(token.slice(i, i + 2))
+      if (token.length <= 2) keywordSet.add(token)
+      else for (let i = 0; i + 2 <= token.length; i += 1) keywordSet.add(token.slice(i, i + 2))
     } else if (token.length >= 2) {
-      terms.add(token)
+      keywordSet.add(token)
     }
   }
-  if (terms.size === 0) return 0
 
-  let hit = 0
-  for (const term of terms) if (haystack.includes(term)) hit += 1
-  return hit / terms.size
+  return {
+    keywordTerms: [...keywordSet],
+    headingPieces: tokens.map((token) =>
+      /[\u4e00-\u9fff]/.test(token) && token.length > 2
+        ? Array.from({ length: token.length - 1 }, (_, i) => token.slice(i, i + 2))
+        : [token]
+    ),
+    phrases: hardPhrases(query),
+  }
 }
 
 /**
@@ -406,35 +437,28 @@ function hardPhrases(query) {
   return [...out].slice(0, 8)
 }
 
-/** 硬词命中的比例：专有名词、型号靠这个救回来 */
-function phraseScore(text, query) {
-  const haystack = String(text || '').toLowerCase()
-  const phrases = hardPhrases(query)
-  if (phrases.length === 0) return 0
-  let hit = 0
-  for (const p of phrases) if (haystack.includes(p)) hit += 1
-  return hit / phrases.length
-}
-
-/** 章节名命中的比例：块抬头写着「选型」，那问「怎么选」时它就该排前面 */
-function headingScore(heading, query) {
-  const h = String(heading || '').toLowerCase()
-  if (!h) return 0
-  const lowered = String(query || '').toLowerCase()
-  let hit = 0
-  let total = 0
-  for (const token of lowered.split(/[\s,，。、;；:：!！?？()（）\[\]{}"'“”‘’]+/)) {
-    if (!token) continue
-    total += 1
-    const pieces = /[\u4e00-\u9fff]/.test(token) && token.length > 2
-      ? Array.from({ length: token.length - 1 }, (_, i) => token.slice(i, i + 2))
-      : [token]
-    if (pieces.some((p) => h.includes(p))) hit += 1
-  }
-  return total === 0 ? 0 : hit / total
-}
-
 const round3 = (n) => Math.round(n * 1000) / 1000
+
+/**
+ * 全库打分时只保留分数最高的这么多条。
+ * MMR 实际最多只用前 120 条（topK 上限 20 × 6），256 留足余量；
+ * 这样内存从 O(全库) 降到常数级，排序结果与全量 sort 完全一致。
+ */
+const MAX_SCORED = 256
+
+/** 降序插入且保持稳定（同分按入库顺序），与 Array.prototype.sort 的稳定排序一致 */
+function keepTopScored(pool, candidate) {
+  let lo = 0
+  let hi = pool.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (pool[mid].score >= candidate.score) lo = mid + 1
+    else hi = mid
+  }
+  if (lo >= MAX_SCORED) return
+  pool.splice(lo, 0, candidate)
+  if (pool.length > MAX_SCORED) pool.pop()
+}
 
 /**
  * 混合检索：向量 + 关键词 + 硬词 + 章节，再 MMR 去重。
@@ -469,28 +493,66 @@ export function search(
     : `SELECT c.id, c.document_id, c.seq, c.heading, c.text, c.embedding, c.dim, d.name AS doc_name
        FROM chunks c JOIN documents d ON d.id = c.document_id
        WHERE c.workspace_id = ?`
-  const rows = db.prepare(sql).all(wsId, ...(filterIds || []))
+  const stmt = db.prepare(sql)
+  const queryInfo = analyzeQuery(query)
 
-  if (rows.length === 0) {
-    return debug ? { chunks: [], candidates: [], total: 0 } : []
-  }
-
-  // —— 第一遍：给所有块打分 ——
-  const scored = []
+  // —— 第一遍：边读边打分 ——
+  // 这里用 iterate 而不是 all：万级块时不再把全部文本与向量同时驻留内存，
+  // 只保留分数最高的 MAX_SCORED 条。MMR 最多只用前 120 条，
+  // 所以最终结果与「全量数组排序后取池」完全一致，只是内存从 O(全库) 变成常数级。
+  const top = []
+  let totalRows = 0
+  let passedCount = 0
   let dimMismatch = 0
-  for (const row of rows) {
-    let vec = row.embedding ? bufferToVector(row.embedding) : null
-    // 维度与查询向量不符 = 老块是换 embedding 模型之前入的库。
-    // cosine 对不上会静默返回 0，「语义检索悄悄失效」就是从这里来的——
-    // 显式跳过并计数，调试视图里能看见原因；MMR 相似度也只在同维度向量间比较。
-    if (vec && queryVector && vec.length !== queryVector.length) {
-      dimMismatch += 1
-      vec = null
+
+  for (const row of stmt.iterate(wsId, ...(filterIds || []))) {
+    totalRows += 1
+    // 即使这次没有查询向量（向量化失败），块向量也要解码：
+    // MMR 去重要用它衡量候选之间的相似度，否则退化成纯按分数排队。
+    let vec = null
+    if (row.embedding) {
+      if (queryVector && row.dim && row.dim !== queryVector.length) {
+        // 维度与查询向量不符 = 老块是换 embedding 模型之前入的库。
+        // cosine 对不上会静默返回 0，「语义检索悄悄失效」就是从这里来的——
+        // 显式跳过并计数，调试视图里能看见原因；MMR 相似度也只在同维度向量间比较。
+        dimMismatch += 1
+      } else {
+        vec = bufferToVector(row.embedding)
+        if (queryVector && vec.length !== queryVector.length) {
+          dimMismatch += 1
+          vec = null
+        }
+      }
     }
     const vecScore = vec && queryVector ? cosine(queryVector, vec) : 0
-    const kwScore = keywordScore(row.text, query)
-    const phScore = phraseScore(`${row.heading || ''} ${row.text}`, query)
-    const hdScore = headingScore(row.heading, query)
+
+    // 每块文本只小写化一次，关键词/硬词/章节三种信号共用
+    const lowerText = String(row.text || '').toLowerCase()
+    const lowerHeading = String(row.heading || '').toLowerCase()
+    const haystack = `${lowerHeading} ${lowerText}`
+
+    let kwScore = 0
+    if (lowerText && queryInfo.keywordTerms.length > 0) {
+      let hit = 0
+      for (const term of queryInfo.keywordTerms) if (lowerText.includes(term)) hit += 1
+      kwScore = hit / queryInfo.keywordTerms.length
+    }
+
+    let phScore = 0
+    if (queryInfo.phrases.length > 0) {
+      let hit = 0
+      for (const phrase of queryInfo.phrases) if (haystack.includes(phrase)) hit += 1
+      phScore = hit / queryInfo.phrases.length
+    }
+
+    let hdScore = 0
+    if (lowerHeading && queryInfo.headingPieces.length > 0) {
+      let hit = 0
+      for (const pieces of queryInfo.headingPieces) {
+        if (pieces.some((piece) => lowerHeading.includes(piece))) hit += 1
+      }
+      hdScore = hit / queryInfo.headingPieces.length
+    }
 
     // 权重：语义为主，关键词与硬词用来救「向量差一点但精确命中」的块
     let score = vecScore * 0.62 + kwScore * 0.2 + phScore * 0.14 + hdScore * 0.04
@@ -499,7 +561,9 @@ export function search(
     // 完全没有语义分又没关键词命中，基本是噪声
     if (vecScore === 0 && kwScore === 0 && phScore === 0) score = 0
 
-    scored.push({
+    if (score >= minScore) passedCount += 1
+
+    keepTopScored(top, {
       id: row.id,
       documentId: row.document_id,
       documentName: row.doc_name,
@@ -515,8 +579,11 @@ export function search(
     })
   }
 
-  scored.sort((a, b) => b.score - a.score)
-  const passed = scored.filter((c) => c.score >= minScore)
+  if (totalRows === 0) {
+    return debug ? { chunks: [], candidates: [], total: 0 } : []
+  }
+
+  const passed = top.filter((c) => c.score >= minScore)
 
   // —— 第二遍：MMR 选 topK，避免同一段话的多个块占满名额 ——
   const picked = []
@@ -561,11 +628,11 @@ export function search(
   const pickedIds = new Set(picked.map((c) => c.id))
   return {
     chunks,
-    total: rows.length,
-    passed: passed.length,
+    total: totalRows,
+    passed: passedCount,
     // 大于 0 = 库里混着别的 embedding 模型的块，语义信号对这些块不生效
     dimMismatch,
-    candidates: scored
+    candidates: top
       .slice(0, 40)
       .map((c) => ({
         id: c.id,

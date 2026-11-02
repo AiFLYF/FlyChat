@@ -6,9 +6,12 @@ import {
   findDocumentByHash,
   search as searchChunks,
   updateDocumentStatus,
+  workspaceUsage,
 } from './store.js'
 import { saveUpload, saveUploadText, enqueueDocument } from './jobs.js'
 import { embedTexts } from './embeddings.js'
+import { config } from '../config.js'
+import { AppError } from '../lib/errors.js'
 
 /**
  * 知识库主流程：解析 → 切块 → 向量化 → 入库。
@@ -17,6 +20,23 @@ import { embedTexts } from './embeddings.js'
  * 注意：真正的解析/切块/向量化在 `jobs.js` 的后台流水线里，
  * 这里只负责「提交」（落盘 + 入队）与「检索」。
  */
+
+/**
+ * 估算这次上传会占多少字节（配额预检查用）。
+ * dataUrl 只按 base64 长度折算而不是完整解码——32MB 的文件解码一次已经够贵；
+ * 网页来源不落源文件，按 0 计，但文档数配额仍然生效。
+ */
+function estimateUploadBytes(input) {
+  if (input.text != null && input.text !== '') return Buffer.byteLength(String(input.text))
+  if (input.dataUrl) {
+    const raw = String(input.dataUrl)
+    const comma = raw.indexOf(',')
+    const b64 = comma >= 0 ? raw.slice(comma + 1) : raw
+    const pad = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0
+    return Math.max(0, Math.floor((b64.length * 3) / 4) - pad)
+  }
+  return 0
+}
 
 /**
  * 提交一篇文档（异步）。
@@ -59,12 +79,28 @@ export function submitDocument(input, { userId = null } = {}) {
     return { duplicate: true, documentId: existing.id, name: existing.name }
   }
 
+  // 配额在判重之后检查：配额已满时重传同一篇仍应返回「重复」而不是 413。
+  const usage = workspaceUsage(workspaceId, { userId })
+  if (usage.documents >= config.rag.maxDocuments) {
+    throw new AppError(`知识库文档数量已达上限（${config.rag.maxDocuments} 篇），请先删除不再需要的文档`, {
+      status: 413,
+      code: 'document_quota_exceeded',
+    })
+  }
+  if (config.rag.maxBytes > 0 && usage.bytes + estimateUploadBytes(input) > config.rag.maxBytes) {
+    throw new AppError(
+      `知识库存储空间不足（上限 ${Math.round(config.rag.maxBytes / 1024 / 1024)}MB），请先删除不再需要的文档`,
+      { status: 413, code: 'document_bytes_exceeded' }
+    )
+  }
+
   const { id } = createDocument(
     {
       workspaceId,
       name: name || '未命名文档',
       mime: url ? 'text/html' : input.mime,
-      size: Number(input.size) || 0,
+      // 不信任客户端传的 size：落盘后用服务端实测值写回
+      size: 0,
       hash,
       sourceUrl: url || undefined,
     },

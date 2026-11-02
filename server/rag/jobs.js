@@ -75,6 +75,57 @@ export function removeUpload(docId) {
   }
 }
 
+/** 失败文档的源文件保留 14 天供重试，之后视为放弃并清理 */
+const FAILED_UPLOAD_TTL_MS = 14 * 24 * 60 * 60 * 1000
+
+/**
+ * 启动时清理 uploads 里的孤儿/过期文件。
+ *
+ * 成功入库、删文档、删用户、删工作区都会删源文件；但进程崩溃、库里已删、
+ * 或者用户传完就再也不管失败的文档时，文件会一直留在磁盘上。
+ * 这里只删三类：没有数据库行的、已 ready 的残留、失败超过 14 天的。
+ * 新失败的文件保留给「重试」，不清。
+ */
+export function cleanupOrphanUploads({ now = Date.now(), failedTtlMs = FAILED_UPLOAD_TTL_MS } = {}) {
+  let dir
+  let names
+  try {
+    dir = uploadDir()
+    names = fs.readdirSync(dir)
+  } catch {
+    return { removed: 0, kept: 0 }
+  }
+  let removed = 0
+  let kept = 0
+  for (const name of names) {
+    if (!isDocumentId(name)) continue
+    let stat
+    try {
+      stat = fs.statSync(path.join(dir, name))
+    } catch {
+      continue
+    }
+    if (!stat.isFile()) continue
+    let row
+    try {
+      row = documentRow(name)
+    } catch {
+      // 数据库不可用时不猜：保留文件，等下次启动再判断
+      kept += 1
+      continue
+    }
+    const orphan = !row
+    const staleReady = row?.status === 'ready'
+    const staleFailed = row?.status === 'failed' && now - stat.mtimeMs > failedTtlMs
+    if (orphan || staleReady || staleFailed) {
+      if (removeUpload(name)) removed += 1
+    } else {
+      kept += 1
+    }
+  }
+  return { removed, kept }
+}
+
 const queue = []
 const running = new Set()
 

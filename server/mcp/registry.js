@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { getDb } from '../store/db.js'
 import { badRequest, notFound } from '../lib/errors.js'
+import { inspectBaseUrl } from '../lib/ssrf.js'
 
 /**
  * MCP server 配置的持久化。
@@ -127,6 +128,10 @@ export function upsertServer(input = {}) {
   } else {
     baseUrl = input.baseUrl === undefined ? String(existing?.base_url || '') : String(input.baseUrl).trim().replace(/\/+$/, '')
     if (!/^https?:\/\/.+/i.test(baseUrl)) throw badRequest('Base URL 必须以 http:// 或 https:// 开头', 'invalid_base_url')
+    // HTTP transport 的地址会被服务端直接请求：云元数据/链路本地一律拒绝，
+    // 否则管理员被诱导配置一个地址就能让服务器去读内网凭据。
+    const inspected = inspectBaseUrl(baseUrl)
+    if (!inspected.ok) throw badRequest(inspected.reason, 'invalid_base_url')
     // 切到 HTTP 时保留原 env；切回 stdio 时也保留 headers，便于来回切换不丢配置
     env = asObject(input.env, existingEnv)
   }

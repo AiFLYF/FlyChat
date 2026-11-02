@@ -118,7 +118,8 @@ export function classifyUpstreamError(status, detail) {
     return { code: 'invalid_request', transient: false, hint: '请求参数有误' }
   }
   if (s === 408) return { code: 'timeout', transient: true, hint: '上游响应超时' }
-  if (s >= 500) return { code: 'server_error', transient: true, hint: '上游服务异常，稍后会自动重试' }
+  // 用户看到这条提示时重试已经耗尽，不能再说「稍后会自动重试」——那是误导
+  if (s >= 500) return { code: 'server_error', transient: true, hint: '上游服务异常，已自动重试仍未恢复，请稍后再试' }
   return { code: 'upstream_error', transient: s >= 408, hint: '上游返回错误' }
 }
 

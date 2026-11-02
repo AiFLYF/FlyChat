@@ -1,7 +1,7 @@
 import { streamOpenAICompat } from './openai-compat.js'
 import { streamAnthropic } from './anthropic.js'
 import { streamGemini } from './gemini.js'
-import { isRetryable, breakerFor, semaphoreFor, withRetry } from '../lib/resilience.js'
+import { isRetryable, isFallbackEligible, breakerFor, semaphoreFor, withRetry } from '../lib/resilience.js'
 import { AppError } from '../lib/errors.js'
 import { config } from '../config.js'
 
@@ -106,7 +106,7 @@ async function attempt({ provider, model, options, onStarted }) {
       if (!options.abortSignal?.aborted) breaker.onFailure()
       throw err
     }
-  })
+  }, { signal: options.abortSignal })
 }
 
 /**
@@ -141,15 +141,18 @@ export async function streamChat(provider, options) {
       })
       return { ...result, provider: candidate.provider, model: candidate.model, usedFallback: i > 0 }
     } catch (err) {
-      lastError = err
+      const error = err instanceof Error ? err : new Error(String(err))
+      error.failedProviderId = candidate.provider.id
+      error.failedModel = candidate.model
+      lastError = error
       const isLast = i === candidates.length - 1
       const canFallback =
-        !isLast && !emittedAny && !options.abortSignal?.aborted && isRetryable(err)
-      if (!canFallback) throw err
+        !isLast && !emittedAny && !options.abortSignal?.aborted && isFallbackEligible(error)
+      if (!canFallback) throw error
       options.onFallback?.({
         from: { provider: candidate.provider, model: candidate.model },
         to: candidates[i + 1],
-        error: err,
+        error,
       })
     }
   }

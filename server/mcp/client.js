@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { validateBaseUrl } from '../lib/ssrf.js'
 import {
   CLIENT_INFO,
   PROTOCOL_VERSION,
@@ -189,6 +190,9 @@ export class McpClient {
 
   async _connectHttp() {
     if (!this.config.baseUrl) throw new Error('HTTP 传输需要 baseUrl')
+    // 每次建立连接都做一次 DNS 校验：保存时的校验挡不住「解析结果后来改成内网」的重绑定
+    const safety = await validateBaseUrl(this.config.baseUrl)
+    if (!safety.ok) throw new Error(safety.reason)
     // Streamable HTTP 不需要预先握手，initialize 时会自动带上
   }
 
@@ -206,8 +210,14 @@ export class McpClient {
       method: 'POST',
       headers,
       body: JSON.stringify(msg),
+      // 不跟随重定向：校验过的是当前地址，跳到别处等于绕过 SSRF 检查
+      redirect: 'manual',
       signal: AbortSignal.timeout(this.timeoutMs),
     })
+
+    if (res.status >= 300 && res.status < 400) {
+      throw new Error(`MCP ${this.name} 返回重定向（${res.status}），请直接配置最终地址`)
+    }
 
     const sessionId = res.headers.get('mcp-session-id')
     if (sessionId) this._sessionId = sessionId
