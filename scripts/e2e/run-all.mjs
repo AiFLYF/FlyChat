@@ -11,6 +11,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from '../lib/playwright.mjs'
@@ -35,6 +36,8 @@ const SUITES = {
   phase4: 'scripts/e2e/phase4.mjs',
   phase5: 'scripts/e2e/phase5.mjs',
   phase6: 'scripts/e2e/phase6.mjs',
+  'state-reliability': 'scripts/e2e/state-reliability.mjs',
+  'chat-reliability': 'scripts/e2e/chat-reliability.mjs',
 }
 
 const procs = []
@@ -51,15 +54,31 @@ function start(name, args, logFile) {
   return child
 }
 
+/**
+ * 就绪探测走 node:http，而不是 fetch。
+ *
+ * undici 的 fetch 一旦被 AbortSignal 掐断，会把那条半开连接留在池子里；机器忙时
+ * 后续请求继续排在同一条连接后面一起挂住。实测过一次「vite 明明 ready 且 curl
+ * 0.1s 返回，但编排的 fetch 连续 120s 全部超时」。agent:false 保证每次新连接。
+ */
+function probe(url, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const req = http.get(url, { agent: false, timeout: timeoutMs }, (res) => {
+      res.resume()
+      resolve(res.statusCode < 500)
+    })
+    req.on('timeout', () => {
+      req.destroy()
+      resolve(false)
+    })
+    req.on('error', () => resolve(false))
+  })
+}
+
 async function waitFor(url, label, timeoutMs = 30000) {
   const t0 = Date.now()
   while (Date.now() - t0 < timeoutMs) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(2000) })
-      if (res.ok || res.status < 500) return true
-    } catch {
-      /* 还没起来，继续等 */
-    }
+    if (await probe(url)) return true
     await new Promise((r) => setTimeout(r, 400))
   }
   throw new Error(`${label} 在 ${timeoutMs}ms 内没有就绪：${url}`)
@@ -122,7 +141,7 @@ async function warmUp() {
     // 'load' 要等所有子资源（字体/图标），任何一个卡住就会一直挂着。
     // 输入框出现就说明模块图已经全部加载完，依赖预构建也就跑完了。
     await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 120000 })
-    await page.waitForSelector('textarea', { timeout: 120000 })
+    await page.waitForSelector('textarea, [aria-label="账户登录"], [aria-label="初始化系统管理员"]', { timeout: 120000 })
     await page.waitForTimeout(800)
     console.log(`  首屏预热完成（${Math.round((Date.now() - t0) / 1000)}s）\n`)
   } catch (e) {
@@ -191,11 +210,7 @@ console.log('\n=== 准备环境 ===')
 try {
   // 先探一下，已经在跑的就不重复起（避免 EADDRINUSE）
   const alive = await Promise.all(
-    [API + '/api/health', BASE + '/', MOCK + '/v1/models'].map((u) =>
-      fetch(u, { signal: AbortSignal.timeout(1500) })
-        .then(() => true)
-        .catch(() => false)
-    )
+    [API + '/api/health', BASE + '/', MOCK + '/v1/models'].map((u) => probe(u, 1500))
   )
   if (!alive[0]) start('backend', ['server/index.js'], 'run-backend.log')
   else console.log('  后端已在运行，复用')

@@ -5,16 +5,10 @@
  * 但浏览器里点「立即登录」后按钮一直是 loading。这个脚本把请求/响应/失败事件
  * 和按钮文案的时间线打出来，用来区分「请求没发出去」「代理挂着不回」「回了但 UI 没更新」。
  */
-import { createRequire } from 'node:module'
-const require = createRequire('C:/Users/FLYF/.workbuddy-ai/binaries/node/workspace/')
-const { chromium } = require('playwright-core')
+import { chromium, launchOptions } from '../../lib/playwright.mjs'
 
 const BASE = process.env.BASE || 'http://127.0.0.1:5181'
-const browser = await chromium.launch({
-  channel: 'chrome',
-  headless: true,
-  args: ['--no-sandbox', '--disable-dev-shm-usage', '--no-proxy-server'],
-})
+const browser = await chromium.launch(launchOptions)
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } })
 const page = await ctx.newPage()
 page.setDefaultNavigationTimeout(90000)

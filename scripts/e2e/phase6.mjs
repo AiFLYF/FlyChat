@@ -166,6 +166,11 @@ await step('正确密码登录成功', async () => {
 // ---------------------------------------------------------------- 数据隔离
 let adminConvId = ''
 await step('管理员发一条消息（作为隔离测试的靶子）', async () => {
+  const providerResponse = await ctx.request.post(BASE + '/api/providers/custom', {
+    data: { name: '闪测模型', type: 'openai-compat', baseUrl: 'http://127.0.0.1:8790/v1', apiKey: 'sk-mock', models: ['mock-flash'] },
+  })
+  if (!providerResponse.ok()) throw new Error(`注册测试模型失败 HTTP ${providerResponse.status()}`)
+  await page.reload({ waitUntil: 'domcontentloaded' })
   await page.locator('textarea').first().fill('管理员私有会话：暗号是青鸟')
   await page.locator('textarea').first().press('Enter')
   // 轮询而不是等固定 6s：慢机器上「流式回答结束 + 会话落库」可能超过 6s，

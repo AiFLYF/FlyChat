@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # --ignore-scripts：与本地安装口径一致，esbuild 的平台二进制来自 optionalDependencies
+      - name: Install
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Type check
+        run: npx tsc -b --pretty false
+
+      - name: Backend tests
+        run: npm test
+
+      - name: Build
+        run: npm run build

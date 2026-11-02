@@ -13,7 +13,7 @@ import { chromium, useSystemChrome } from './lib/playwright.mjs'
 
 // 目标地址：env BASE_URL > 命令行参数 > Vite 默认 5173（与 vite.config.ts 对齐）
 const base = process.env.BASE_URL || process.argv[2] || 'http://127.0.0.1:5173'
-const out = fileURLToPath(new URL('../.shots/', import.meta.url))
+const out = process.env.SHOTS_DIR || fileURLToPath(new URL('../.shots/', import.meta.url))
 mkdirSync(out, { recursive: true })
 
 const errors = []
@@ -417,13 +417,22 @@ for (const c of CHAT_CASES) {
     await page.getByRole('button', { name: '导出' }).first().click()
     await page.waitForTimeout(300)
     if ((await page.getByRole('menu').count()) === 0) errors.push(`[${tag}] 导出菜单未打开`)
-    await page.keyboard.press('Escape')
-    await page.waitForTimeout(50)
-    const exitAnim = await page.evaluate(() => {
-      const m = document.querySelector('[role="menu"]')
-      return m ? getComputedStyle(m).animationName : 'unmounted'
+    // 退场同样只有 200ms，单帧取样会落在卸载之后；用观察器记录是否出现过 menu-out
+    await page.evaluate(() => {
+      window.__menuExitSeen = false
+      window.__menuObs = new MutationObserver(() => {
+        const m = document.querySelector('[role="menu"]')
+        if (m && getComputedStyle(m).animationName === 'menu-out') window.__menuExitSeen = true
+      })
+      window.__menuObs.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class'] })
     })
-    await page.waitForTimeout(350)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(120)
+    const exitAnim = await page.evaluate(() => {
+      window.__menuObs?.disconnect()
+      return window.__menuExitSeen ? 'menu-out' : 'unmounted'
+    })
+    await page.waitForTimeout(300)
     if (exitAnim !== 'menu-out') errors.push(`[${tag}] 下拉退场动画缺失: ${exitAnim}`)
     if ((await page.getByRole('menu').count()) !== 0) errors.push(`[${tag}] 菜单退场后未卸载`)
   }
@@ -481,3 +490,5 @@ for (const c of CHAT_CASES) {
 
 await browser.close()
 console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console/page errors, no overflow')
+// 这是提交门禁的一部分：发现问题必须让调用方（CI / 本地脚本）拿到非 0 退出码
+process.exitCode = errors.length ? 1 : 0

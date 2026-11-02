@@ -96,13 +96,34 @@ page.on('console', (m) => {
 })
 
 console.log('\n=== FlyChat 第二阶段 e2e @ ' + BASE + ' ===\n')
+// 对比模式需要至少两个可选模型。老版本靠开发者本机库里遗留的 space-bunny-free，
+// 换一套干净数据库就只剩 mock-flash，后面 6 条用例会连锁超时。这里显式注册专用模型，
+// 跑完在 finally 里删掉，重复运行也不留垃圾。
+const compareModels = ['mock-compare-a', 'mock-compare-b']
+const existing = await ctx.request
+  .get(BASE + '/api/providers')
+  .then((r) => (r.ok() ? r.json() : { providers: [] }))
+  .catch(() => ({ providers: [] }))
+for (const p of existing.providers || []) {
+  if (p.name === 'E2E 对比模型') {
+    await ctx.request.delete(BASE + '/api/providers/custom/' + p.id).catch(() => {})
+  }
+}
+const providerResponse = await ctx.request.post(BASE + '/api/providers/custom', {
+  data: { name: 'E2E 对比模型', type: 'openai-compat', baseUrl: 'http://127.0.0.1:8790/v1', apiKey: 'sk-mock', models: compareModels },
+})
+if (!providerResponse.ok()) throw new Error(`注册对比模型失败 HTTP ${providerResponse.status()}`)
+const testProvider = await providerResponse.json()
+if (!testProvider.id) throw new Error('注册对比模型没有返回 id：' + JSON.stringify(testProvider))
+
+try {
 await page.goto(BASE, { waitUntil: 'domcontentloaded' })
 await page.waitForTimeout(2500)
 
 // 先切到 mock 模型（单模型）
 await page.locator('button[aria-haspopup="menu"]').first().click()
 await page.waitForTimeout(500)
-await page.locator('[role="menuitem"]').filter({ hasText: 'mock-flash' }).first().click()
+await page.locator('[role="menuitem"]').filter({ hasText: compareModels[0] }).first().click()
 await page.waitForTimeout(600)
 
 // ---------------------------------------------------------------- 多模型对比
@@ -115,19 +136,19 @@ await step('开启多模型对比并勾选两个模型', async () => {
     await sw.click()
     await page.waitForTimeout(500)
   }
-  const items = page.locator('[role="menuitem"]')
-  const n = await items.count()
-  if (n < 2) throw new Error('可对比模型不足 2 个，实际 ' + n)
   const names = []
-  for (const i of [0, 1]) {
-    names.push((await items.nth(i).innerText()).replace(/\s+/g, ' ').trim())
-    await items.nth(i).click()
+  for (const model of compareModels) {
+    const item = page.locator('[role="menuitem"]').filter({ hasText: model }).first()
+    await item.waitFor({ state: 'visible' })
+    names.push((await item.innerText()).replace(/\s+/g, ' ').trim())
+    await item.click()
     await page.waitForTimeout(350)
   }
   await shot(page, 'compare-menu')
   await reset(page)
   const trigger = await page.locator('button[aria-haspopup="menu"]').first().innerText()
-  if (!/对比/.test(trigger)) throw new Error('触发按钮没进入对比态：' + trigger.replace(/\s+/g, ' '))
+  // 用「对比 N 个模型」而不是 /对比/：服务商名里也可能带「对比」二字
+  if (!/对比\s*2\s*个模型/.test(trigger)) throw new Error('触发按钮没进入对比态：' + trigger.replace(/\s+/g, ' '))
   return names.join(' + ') + ' → ' + trigger.replace(/\s+/g, ' ')
 })
 
@@ -147,7 +168,7 @@ await step('对比模式发送并得到多列结果', async () => {
     retryBtns: [...document.querySelectorAll('button')].filter((b) => /重试/.test(b.innerText || '')).length,
   }))
   const hasHeader = /多模型对比|个回答/.test(info.text)
-  const hasBoth = /space-bunny-free/.test(info.text) && /mock-flash/.test(info.text)
+  const hasBoth = compareModels.every((m) => info.text.includes(m))
   if (!hasHeader || !hasBoth) throw new Error(`对比结果不完整：header=${hasHeader} both=${hasBoth}`)
   return `两列都已渲染（markdown ${info.markdown} 个，重试按钮 ${info.retryBtns} 个）`
 })
@@ -162,7 +183,7 @@ await step('关闭多模型对比', async () => {
   await page.waitForTimeout(500)
   await reset(page)
   const trigger = await page.locator('button[aria-haspopup="menu"]').first().innerText()
-  if (/对比/.test(trigger)) throw new Error('仍处于对比态')
+  if (/对比\s*\d+\s*个模型/.test(trigger)) throw new Error('仍处于对比态')
   return '已回到单模型：' + trigger.replace(/\s+/g, ' ')
 })
 
@@ -312,6 +333,9 @@ await step('删除会话', async () => {
   if (after >= before) throw new Error(`会话数没减少 ${before} → ${after}`)
   return `${before} → ${after}`
 })
+} finally {
+  await ctx.request.delete(BASE + '/api/providers/custom/' + testProvider.id).catch(() => {})
+}
 
 console.log('\n=== 结果汇总 ===')
 const pass = results.filter((r) => r.ok).length

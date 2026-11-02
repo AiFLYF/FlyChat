@@ -81,6 +81,12 @@ page.on('pageerror', (e) => errors.push('PAGEERROR ' + e.message.slice(0, 200)))
 page.on('console', (m) => {
   if (m.type() === 'error') errors.push('CONSOLE ' + m.text().slice(0, 200))
 })
+await page.addInitScript(() => {
+  window.testModule = (modulePath) => {
+    const loaded = performance.getEntriesByType('resource').find((entry) => new URL(entry.name).pathname === modulePath)
+    return import(loaded?.name || modulePath)
+  }
+})
 
 console.log('\n=== FlyChat 第四阶段 e2e @ ' + BASE + ' ===\n')
 await page.goto(BASE, { waitUntil: 'domcontentloaded' })
@@ -229,8 +235,12 @@ await step('数据导入：坏备份被拒绝', async () => {
   return '坏文件被拒并提示'
 })
 
-await step('数据导入：合法备份被接受', async () => {
+await step('数据导入：合法备份被接受（会话 + 偏好设置）', async () => {
   await openSettingsTab(page, '数据与备份')
+  const before = await page.evaluate(async () => {
+    const { useChatStore } = await window.testModule('/src/store/chat.ts')
+    return useChatStore.getState().settings
+  })
   const file = path.join(DL, 'good-backup.json')
   fs.writeFileSync(
     file,
@@ -252,7 +262,14 @@ await step('数据导入：合法备份被接受', async () => {
       ],
       prompts: [{ id: 'e2e-imported-prompt', title: 'E2E 导入提示词', content: '导入的提示词', createdAt: Date.now() }],
       assistants: [],
-      settings: {},
+      settings: {
+        temperature: 0.35,
+        topP: 0.8,
+        maxTokens: 2048,
+        systemPrompt: 'E2E 导入的系统提示',
+        theme: 'dark',
+        usingContext: false,
+      },
     }),
     'utf8'
   )
@@ -260,11 +277,26 @@ await step('数据导入：合法备份被接受', async () => {
   await page.waitForTimeout(1500)
   await shot(page, 'import-good')
   const txt = await page.locator('[role="dialog"]').innerText()
+  const imported = await page.evaluate(async () => {
+    const { useChatStore } = await window.testModule('/src/store/chat.ts')
+    return useChatStore.getState().settings
+  })
+  // 后续步骤沿用原设置，避免备份里的深色主题影响其它断言
+  await page.evaluate(async (prev) => {
+    const { useChatStore } = await window.testModule('/src/store/chat.ts')
+    useChatStore.getState().updateSettings(prev)
+  }, before)
   await reset(page)
   if (!/导入成功|导入完成/.test(txt)) throw new Error('合法备份未提示成功：' + txt.slice(0, 100).replace(/\s+/g, ' '))
+  if (imported.temperature !== 0.35 || imported.topP !== 0.8 || imported.maxTokens !== 2048) {
+    throw new Error('偏好设置没有恢复：' + JSON.stringify({ temperature: imported.temperature, topP: imported.topP, maxTokens: imported.maxTokens }))
+  }
+  if (imported.systemPrompt !== 'E2E 导入的系统提示' || imported.usingContext !== false || imported.theme !== 'dark') {
+    throw new Error('偏好设置字段不完整：' + JSON.stringify({ systemPrompt: imported.systemPrompt, usingContext: imported.usingContext, theme: imported.theme }))
+  }
   // 侧边栏应出现导入的会话
   const inSidebar = await page.locator('aside >> text=E2E 导入的会话').count()
-  return inSidebar ? '导入成功且会话已出现在侧边栏' : '导入成功（会话未出现在侧边栏，需确认）'
+  return inSidebar ? '导入成功：会话入侧边栏、偏好设置已恢复' : '导入成功且设置已恢复（会话未出现在侧边栏，需确认）'
 })
 
 // ---------------------------------------------------------------- 会话导出

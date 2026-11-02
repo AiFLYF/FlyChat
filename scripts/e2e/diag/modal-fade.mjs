@@ -1,9 +1,7 @@
-import { createRequire } from 'node:module'
-const require = createRequire('C:/Users/FLYF/.workbuddy-ai/binaries/node/workspace/')
-const { chromium } = require('playwright-core')
+import { chromium, launchOptions } from '../../lib/playwright.mjs'
 
 const BASE = process.env.BASE || 'http://127.0.0.1:5180'
-const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--no-sandbox', '--no-proxy-server'] })
+const browser = await chromium.launch(launchOptions)
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 const page = await ctx.newPage()
 page.setDefaultNavigationTimeout(60000)

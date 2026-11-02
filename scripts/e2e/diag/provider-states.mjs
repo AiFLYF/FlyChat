@@ -2,17 +2,15 @@
  * 验证首屏三态：加载中 / 请求失败 / 正常。
  * 用 CDP 的请求拦截（route）人为延迟和失败，确认不再把「还在加载」渲染成「没配 Key」。
  */
-import { createRequire } from 'node:module'
 import path from 'node:path'
 import fs from 'node:fs'
-const require = createRequire('C:/Users/FLYF/.workbuddy-ai/binaries/node/workspace/')
-const { chromium } = require('playwright-core')
+import { chromium, launchOptions } from '../../lib/playwright.mjs'
 
 const BASE = process.env.BASE || 'http://127.0.0.1:5180'
 const OUT = path.resolve('.shots/diag')
 fs.mkdirSync(OUT, { recursive: true })
 
-const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--no-sandbox', '--no-proxy-server'] })
+const browser = await chromium.launch(launchOptions)
 
 const readHero = (page) =>
   page.evaluate(() => {
