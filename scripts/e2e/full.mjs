@@ -194,6 +194,8 @@ await step('空知识库不再弹「没有检索到相关内容」', async () =>
 })
 
 await step('Markdown 渲染：代码块/高亮/加粗/列表', async () => {
+  // Markdown 渲染器是懒加载 chunk：等它真正挂载，而不是赌固定等待时长
+  await page.waitForSelector('.markdown-body pre code', { timeout: 15_000 })
   const n = await page.evaluate(() => ({
     code: document.querySelectorAll('.markdown-body pre code').length,
     hljs: document.querySelectorAll('.markdown-body pre code span[class*="hljs"]').length,
