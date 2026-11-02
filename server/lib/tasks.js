@@ -166,10 +166,14 @@ function pickModel(kind, { provider: providerId, model } = {}) {
  *
  * @param {string} kind 见 TASK_KINDS
  * @param {object} input 任务入参
- * @param {{ provider?: string, model?: string, signal?: AbortSignal, record?: boolean }} options
+ * @param {{ provider?: string, model?: string, signal?: AbortSignal, record?: boolean, userId?: string|null }} options
  * @returns {Promise<{ result: object, model: string, provider: string, dedicated: boolean, usage: object, costUsd: number }>}
  */
-export async function runTask(kind, input = {}, { provider: providerId, model, signal, record = true } = {}) {
+export async function runTask(
+  kind,
+  input = {},
+  { provider: providerId, model, signal, record = true, userId = null } = {}
+) {
   const task = KINDS[kind]
   if (!task) {
     throw badRequest(`不支持的任务类型：${kind}（可选：${TASK_KINDS.join(' / ')}）`, 'unknown_task')
@@ -209,6 +213,8 @@ export async function runTask(kind, input = {}, { provider: providerId, model, s
   // 小任务也要记账：不然「一天几百次标题生成」的成本在报表里完全看不见
   if (record) {
     recordUsage({
+      // 多用户模式下必须带归属，否则标题/摘要的消耗既进不了个人报表，也清不掉
+      userId,
       provider: picked.provider.id,
       model: picked.model,
       ...finalUsage,

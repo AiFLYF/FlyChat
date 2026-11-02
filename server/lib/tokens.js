@@ -6,6 +6,8 @@
  * 高估的后果是多裁一点历史，低估的后果是上游直接 400 —— 宁可高估。
  */
 
+import { badRequest } from './errors.js'
+
 /** 中日韩字符（含全角标点）：主流分词器基本 1 字 ≈ 1 token 或更少 */
 const CJK = /[\u1100-\u11ff\u2e80-\u9fff\u3000-\u303f\u3040-\u30ff\u3130-\u318f\uac00-\ud7af\uff00-\uffef]/
 
@@ -25,14 +27,20 @@ export function estimateTokens(text) {
   return Math.ceil(cjk * 1.05 + ascii / 3.6)
 }
 
-/** 单条消息的 token：正文 + 附件文本 + 图片 */
+/** 单条消息的 token：正文 + 工具调用 + 附件文本 + 图片 */
 export function estimateMessageTokens(message) {
   if (!message) return 0
   let total = MESSAGE_OVERHEAD
   total += estimateTokens(message.content || '')
+  // agent 轮次里助手的 tool_calls 会原样回传给上游，参数可能很大，不能漏算
+  for (const call of message.tool_calls || []) {
+    total += 8 + estimateTokens(call?.name || '')
+    const args = typeof call?.arguments === 'string' ? call.arguments : JSON.stringify(call?.arguments || {})
+    total += estimateTokens(args)
+  }
   for (const att of message.attachments || []) {
     if (att?.type === 'image') total += IMAGE_TOKENS
-    else if (att?.text) total += estimateTokens(String(att.text).slice(0, 100_000)) + 8
+    else if (att?.text) total += estimateTokens(att.text) + estimateTokens(att.name || '文档') + 8
   }
   return total
 }
@@ -51,16 +59,66 @@ export function estimateMessagesTokens(messages) {
 export function truncateMiddle(text, maxChars, keepRatio = 0.5) {
   const str = String(text || '')
   if (str.length <= maxChars) return { text: str, truncated: false, removed: 0 }
-  const headChars = Math.max(1, Math.floor(maxChars * keepRatio))
-  const tailChars = Math.max(1, maxChars - headChars)
-  const removed = str.length - headChars - tailChars
+  const chars = Number.isFinite(maxChars) ? Math.max(0, Math.floor(maxChars)) : 0
+  const ratio = Number.isFinite(keepRatio) ? Math.min(1, Math.max(0, keepRatio)) : 0.5
+  const headChars = Math.floor(chars * ratio)
+  const tailChars = chars - headChars
+  const removed = str.length - chars
   const marker = `\n\n…（此处省略 ${removed.toLocaleString()} 字符，原文过长已中段截断）…\n\n`
   return { text: str.slice(0, headChars) + marker + str.slice(str.length - tailChars), truncated: true, removed }
 }
 
-/** 按 token 预算反推可用字符数（保守：按纯 ASCII 最省的情况也不超过） */
-function charsForTokens(tokens) {
-  return Math.max(200, Math.floor(tokens * 3.2))
+/** maxChars 仍表示保留的原文字符数；token 限制必须连中段标记一起实测。 */
+export function truncateToTokens(text, maxTokens, keepRatio) {
+  const str = String(text || '')
+  if (estimateTokens(str) <= maxTokens) return str
+  // 小预算放不下完整标记时，用短标记（零预算只能清空），不能设置最小字符数。
+  let result = maxTokens >= estimateTokens('…') ? '…' : ''
+  let low = 0
+  let high = str.length - 1
+  while (low <= high) {
+    const chars = Math.floor((low + high) / 2)
+    const cut = truncateMiddle(str, chars, keepRatio)
+    if (estimateTokens(cut.text) <= maxTokens) {
+      result = cut.text
+      low = chars + 1
+    } else {
+      high = chars - 1
+    }
+  }
+  return result
+}
+
+/** 最新消息不能丢：先预留图片及附件包装开销，再按文本大小分配剩余预算。 */
+function truncateMessage(message, budget, keepRatio) {
+  const attachments = message.attachments || []
+  let fixed = MESSAGE_OVERHEAD
+  let textTokens = estimateTokens(message.content || '')
+  for (const att of attachments) {
+    if (att?.type === 'image') fixed += IMAGE_TOKENS
+    else if (att?.text) {
+      fixed += estimateTokens(att.name || '文档') + 8
+      textTokens += estimateTokens(att.text)
+    }
+  }
+  if (fixed > budget) {
+    throw badRequest('消息的图片、附件或协议开销超出上下文预算，请减少附件或预留输出，或更换长上下文模型', 'context_overflow')
+  }
+  const available = budget - fixed
+  const cutText = (text) => truncateToTokens(
+    text,
+    textTokens > 0 ? Math.floor(available * estimateTokens(text) / textTokens) : 0,
+    keepRatio,
+  )
+  return {
+    ...message,
+    content: cutText(message.content || ''),
+    ...(message.attachments ? {
+      attachments: attachments.map((att) => att?.type !== 'image' && att?.text
+        ? { ...att, text: cutText(att.text) }
+        : att),
+    } : {}),
+  }
 }
 
 /**
@@ -71,9 +129,10 @@ function charsForTokens(tokens) {
  * @param {Array} opts.messages 内部消息数组（旧 → 新）
  * @param {number} opts.contextWindow 模型上下文窗口
  * @param {number} opts.maxOutput 本次请求预留的输出 token
- * @param {number} [opts.minKeepMessages] 至少保留最近多少条
+ * @param {number} [opts.minKeepMessages] 尽量保留的最近消息数，允许截短但绝不突破预算
  * @returns {{messages: Array, system: string, trimmed: boolean, dropped: number,
  *            truncated: number, estimatedInputTokens: number, budget: number}}
+ * truncated 统计截短的消息数（含附件），system 截短另计一次；trimmed 表示发生任何裁剪。
  */
 export function planContext({
   system = '',
@@ -85,17 +144,16 @@ export function planContext({
 }) {
   // 安全余量：估算误差 + 协议开销 + 系统提示词的隐藏部分
   const safety = Math.ceil(contextWindow * 0.05)
-  const budget = Math.max(1024, contextWindow - Math.max(1, maxOutput) - safety)
-
-  let systemText = system || ''
-  let systemTokens = estimateTokens(systemText)
-  // 系统提示词自己就超预算：中段截断，至少还能保留指令头尾
-  if (systemTokens > budget * 0.4) {
-    const cut = truncateMiddle(systemText, charsForTokens(Math.floor(budget * 0.4)), middleOutKeep)
-    systemText = cut.text
-    systemTokens = estimateTokens(systemText)
+  const budget = contextWindow - Math.max(1, maxOutput) - safety
+  if (!Number.isFinite(budget) || budget <= 0) {
+    throw badRequest('预留输出和安全余量后没有可用的上下文空间，请减少预留输出或更换长上下文模型', 'context_overflow')
   }
 
+  const originalSystem = String(system || '')
+  // 系统提示词最多占 40%；截断标记也必须计入预算。
+  const systemText = truncateToTokens(originalSystem, Math.floor(budget * 0.4), middleOutKeep)
+  const systemTokens = estimateTokens(systemText)
+  let truncated = Number(systemText !== originalSystem)
   const available = budget - systemTokens
   const list = Array.isArray(messages) ? messages : []
   const total = estimateMessagesTokens(list)
@@ -104,28 +162,33 @@ export function planContext({
     return {
       messages: list,
       system: systemText,
-      trimmed: false,
+      trimmed: truncated > 0,
       dropped: 0,
-      truncated: 0,
+      truncated,
       estimatedInputTokens: systemTokens + total,
       budget,
     }
   }
 
-  // 从最新往前装，装不下就停；最后一条（当前提问）必须保留
+  // 最新消息优先；minKeepMessages 仅尝试截短较早的消息，不挤占已保留消息的预算。
+  const keepTarget = Number.isFinite(minKeepMessages) ? Math.max(1, Math.floor(minKeepMessages)) : 1
   const kept = []
   let used = 0
   for (let i = list.length - 1; i >= 0; i -= 1) {
-    const msg = list[i]
-    const cost = estimateMessageTokens(msg)
-    if (kept.length > 0 && used + cost > available && kept.length >= minKeepMessages) break
-    if (used + cost > available && kept.length === 0) {
-      // 单条就爆预算：中段截断这一条
-      const maxChars = charsForTokens(available)
-      const cut = truncateMiddle(msg.content || '', maxChars, middleOutKeep)
-      kept.push({ ...msg, content: cut.text })
-      used += estimateMessageTokens({ ...msg, content: cut.text })
-      break
+    let msg = list[i]
+    let cost = estimateMessageTokens(msg)
+    const remaining = available - used
+    if (cost > remaining) {
+      if (kept.length >= keepTarget) break
+      try {
+        msg = truncateMessage(msg, remaining, middleOutKeep)
+      } catch (err) {
+        // 旧消息连固定开销都放不下时停止；最新消息放不下必须明确报 400。
+        if (kept.length > 0 && err?.code === 'context_overflow') break
+        throw err
+      }
+      cost = estimateMessageTokens(msg)
+      truncated += 1
     }
     kept.push(msg)
     used += cost
@@ -135,9 +198,9 @@ export function planContext({
   return {
     messages: kept,
     system: systemText,
-    trimmed: kept.length < list.length,
+    trimmed: kept.length < list.length || truncated > 0,
     dropped: list.length - kept.length,
-    truncated: kept.some((m) => String(m.content || '').includes('原文过长已中段截断')) ? 1 : 0,
+    truncated,
     estimatedInputTokens: systemTokens + used,
     budget,
   }

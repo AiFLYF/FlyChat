@@ -4,7 +4,7 @@ import { initStorage, closeStorage } from './store/db.js'
 import { logger } from './lib/logger.js'
 import { configuredProviders } from './providers/registry.js'
 import { availableSearchProviders } from './search/index.js'
-import { resetStaleJobs } from './rag/jobs.js'
+import { resetStaleJobs, cleanupOrphanUploads } from './rag/jobs.js'
 import { cleanupSessions, countUsers } from './store/users.js'
 
 /**
@@ -17,6 +17,14 @@ initStorage()
 // 上次进程中断可能留下「processing」状态的行，复位成可重试的 failed
 await resetStaleJobs()
 
+// uploads 下没有归属/已过期失败的文件不该永久占磁盘
+try {
+  const { removed } = cleanupOrphanUploads()
+  if (removed > 0) logger.info('已清理孤儿上传文件', { removed })
+} catch (err) {
+  logger.warn('清理上传目录失败', { message: err?.message })
+}
+
 // 清掉过期登录态；多用户模式下顺便提示「还没建管理员」和「有没有无主会话」
 cleanupSessions()
 if (config.auth.multiUser) {
@@ -25,9 +33,23 @@ if (config.auth.multiUser) {
     logger.warn('已开启多用户模式但还没有任何账号：打开网页会进入「创建管理员」页')
   } else {
     const { getDb } = await import('./store/db.js')
-    const orphans = getDb().prepare('SELECT COUNT(*) AS n FROM conversations WHERE user_id IS NULL').get()?.n || 0
-    if (orphans > 0) {
-      logger.warn('存在无归属的历史会话，管理员可调用 POST /api/conversations/claim-orphans 认领', { orphans })
+    const db = getDb()
+    const countOrphans = (table) => {
+      try {
+        return db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE user_id IS NULL`).get()?.n || 0
+      } catch {
+        return 0
+      }
+    }
+    const conversations = countOrphans('conversations')
+    const folders = countOrphans('folders')
+    const workspaces = countOrphans('workspaces')
+    if (conversations + folders + workspaces > 0) {
+      logger.warn('存在无归属的历史数据，管理员可调用 POST /api/conversations/claim-orphans 认领', {
+        conversations,
+        folders,
+        workspaces,
+      })
     }
   }
 }
@@ -46,6 +68,10 @@ const server = app.listen(config.server.port, config.server.host, () => {
     logger.warn('还没有可用的模型服务商：打开前端「设置 → 模型服务」添加，或在 server/.env 填入 API Key')
   }
 })
+
+// Node 默认 keepAliveTimeout 只有 5s：空闲连接被服务端先关，客户端复用即 ECONNRESET
+server.keepAliveTimeout = config.server.keepAliveTimeoutMs
+server.headersTimeout = config.server.headersTimeoutMs
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {

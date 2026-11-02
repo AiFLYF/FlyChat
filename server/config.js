@@ -100,6 +100,21 @@ export const config = {
     port: readInt('PORT', 3001, 0, 65535),
     host: process.env.HOST || '127.0.0.1',
     trustProxy: readBool('TRUST_PROXY', false),
+    /**
+     * 允许的 Host 头（域名部署必须配置，例如 chat.example.com）。
+     * IP 字面量、localhost、CORS_ORIGINS 里的 host 始终放行。
+     * 这是防 DNS 重绑定：攻击者让 evil.com 解析到 127.0.0.1 时，
+     * 浏览器发的 Host 就是 evil.com，不在白名单里直接拒绝。
+     */
+    trustedHosts: readList('TRUSTED_HOSTS'),
+    /**
+     * keep-alive 空闲连接的保留时长。Node 默认只有 5s，比浏览器、反代和
+     * undici 连接池的空闲容忍都短：服务端先静默关 socket，客户端下一拍
+     * 复用这条半死连接就 ECONNRESET（测试里表现为间歇性 fetch failed）。
+     * 提到 65s（高于常见代理 60s 的默认空闲超时）；headersTimeout 必须更大。
+     */
+    keepAliveTimeoutMs: readInt('KEEP_ALIVE_TIMEOUT_MS', 65_000, 1000, 600_000),
+    headersTimeoutMs: readInt('HEADERS_TIMEOUT_MS', 66_000, 2000, 600_000),
   },
 
   /**
@@ -109,6 +124,14 @@ export const config = {
    */
   auth: {
     token: (process.env.FLYCHAT_ACCESS_TOKEN || '').trim(),
+    /**
+     * 登录 cookie 是否加 Secure。auto = 跟随实际请求协议（反代场景把 TRUST_PROXY 设为 1
+     * 才会读 X-Forwarded-Proto）；Docker 里 NODE_ENV=production + HOST=0.0.0.0 但用户
+     * 用 http://局域网IP 访问时，硬编码 Secure 会让 cookie 被浏览器丢弃、登录看起来永远失败。
+     */
+    cookieSecure: ['on', 'off'].includes(String(process.env.COOKIE_SECURE || '').toLowerCase())
+      ? String(process.env.COOKIE_SECURE).toLowerCase()
+      : 'auto',
     /**
      * 多用户模式。默认关闭 = 单用户（跟以前完全一样，不鉴权）。
      * 打开后所有 /api 与 /v1 都要求登录，会话按用户隔离。
@@ -137,6 +160,14 @@ export const config = {
     writeRate: {
       windowMs: readInt('RATE_WINDOW_MS', 60_000, 1000, 3_600_000),
       max: readInt('RATE_MAX', 240, 1, 100_000),
+    },
+    /**
+     * 重读接口（/api/export、/api/conversations/:id/export）单独限流：
+     * 一次导出就把全部会话读进内存，普通浏览不该被牵连，反复导出则要拦住。
+     */
+    exportRate: {
+      windowMs: readInt('EXPORT_WINDOW_MS', 60_000, 1000, 3_600_000),
+      max: readInt('EXPORT_RATE_MAX', 20, 1, 10_000),
     },
   },
 
@@ -208,6 +239,10 @@ export const config = {
      * 确实需要放开时设 ALLOW_PRIVATE_INGEST=1。
      */
     rejectPrivateIngest: readBool('ALLOW_PRIVATE_INGEST', false) ? false : readBool('MULTI_USER', false),
+    /** 单个工作区最多多少篇文档（含处理中/失败的） */
+    maxDocuments: readInt('RAG_MAX_DOCS', 500, 1, 100_000),
+    /** 单个工作区源文件总字节上限；0 = 不限制 */
+    maxBytes: readInt('RAG_MAX_MB', 512, 0, 1_000_000) * 1024 * 1024,
   },
 }
 
@@ -222,6 +257,13 @@ export function configWarnings() {
   }
   if (config.cors.origins.length === 0 && config.env === 'production') {
     warnings.push('生产环境未设置 CORS_ORIGINS：仅允许同源与本机来源；跨域前端请显式配置白名单')
+  }
+  if (config.server.host === '0.0.0.0' && config.server.trustedHosts.length === 0) {
+    warnings.push('监听 0.0.0.0 但未设置 TRUSTED_HOSTS：用域名访问时会被 403，请把域名加入 TRUSTED_HOSTS')
+  }
+  const loopbackHost = config.server.host === '127.0.0.1' || config.server.host === 'localhost' || config.server.host === '::1'
+  if (config.auth.multiUser && !loopbackHost && !config.server.trustProxy) {
+    warnings.push('多用户模式未设置 TRUST_PROXY：反向代理后所有用户共享代理 IP，限流与登录锁定会互相影响')
   }
   return warnings
 }

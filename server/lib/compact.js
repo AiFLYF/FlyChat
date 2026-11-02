@@ -27,10 +27,23 @@ const SUMMARY_SYSTEM = [
 
 const SUMMARY_MAX_TOKENS = 800
 
-/** 被丢弃消息的 id 集合 → 稳定 key（同样的前缀就用缓存里的摘要） */
-export function buildPrefixKey(messages) {
-  const ids = (messages || []).map((m) => m.id || `${m.role}:${m.createdAt || ''}`).join('|')
-  return crypto.createHash('sha1').update(ids).digest('hex').slice(0, 24)
+/** 对象键顺序不影响缓存，数组（消息与附件）的顺序仍有意义。 */
+function stableJson(value) {
+  return JSON.stringify(value, (_key, item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item
+    return Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]]))
+  })
+}
+
+/** 内容及可选的用户/会话 scope → 稳定 key；编辑消息或附件后不能复用旧摘要。 */
+export function buildPrefixKey(messages, scope = '') {
+  const payload = {
+    scope,
+    messages: (messages || []).map(({ id, role, content, createdAt, attachments }) => ({
+      id, role, content, createdAt, attachments,
+    })),
+  }
+  return crypto.createHash('sha256').update(stableJson(payload)).digest('hex')
 }
 
 /** 把消息转成喂给摘要器的纯文本 */
@@ -50,12 +63,12 @@ export function resolveSummarizer(primaryProviderId) {
 
 /**
  * 压缩被丢弃的历史。
- * @param {{dropped: Array, provider?: object, signal?: AbortSignal, useCache?: boolean}} options
+ * @param {{dropped: Array, provider?: object, signal?: AbortSignal, useCache?: boolean, scope?: string | object}} options
  * @returns {Promise<{summary: string, cached: boolean, tokens: number, model: string} | null>}
  */
-export async function summarizeDropped({ dropped, provider, signal, useCache = true }) {
+export async function summarizeDropped({ dropped, provider, signal, useCache = true, scope }) {
   if (!Array.isArray(dropped) || dropped.length === 0) return null
-  const prefixKey = buildPrefixKey(dropped)
+  const prefixKey = buildPrefixKey(dropped, scope)
   if (useCache) {
     const cached = getSummary(prefixKey)
     if (cached) return { ...cached, cached: true }

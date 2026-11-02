@@ -46,7 +46,9 @@ export class UpstreamError extends AppError {
 export function toErrorResponse(err) {
   const status = err?.status && Number.isInteger(err.status) ? err.status : 500
   const body = {
-    error: err?.expose === false ? '服务器内部错误' : err?.message || '服务器内部错误',
+    // 只有 4xx 或显式 expose=true 的消息可以回给客户端；
+    // 原生异常（SQLite / fs 等）没有 expose 字段，5xx 一律固定文案，原文只进日志
+    error: status >= 500 && err?.expose !== true ? '服务器内部错误' : err?.message || '请求处理失败',
     code: err?.code || 'internal_error',
   }
   if (err?.details !== undefined) body.details = err.details

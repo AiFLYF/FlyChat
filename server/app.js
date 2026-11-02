@@ -1,12 +1,14 @@
 import express from 'express'
 import cors from 'cors'
 import crypto from 'node:crypto'
+import net from 'node:net'
 import fs from 'node:fs'
 import path from 'node:path'
 import { config, configWarnings, ROOT_DIR } from './config.js'
 import { AppError, toErrorResponse } from './lib/errors.js'
 import { createLogger, logger } from './lib/logger.js'
 import { inc, observe } from './lib/metrics.js'
+import { createRateLimiter } from './lib/rate-limit.js'
 import chatRoutes from './routes/chat.js'
 import providerRoutes from './routes/providers.js'
 import modelRoutes from './routes/models.js'
@@ -44,6 +46,37 @@ function metricRoute(path) {
   )
 }
 
+/** 显式信任的主机名（TRUSTED_HOSTS / CORS_ORIGINS，支持 host 或完整来源） */
+const configuredHosts = new Set(
+  [...config.server.trustedHosts, ...config.cors.origins]
+    .map((entry) => {
+      try {
+        return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(entry) ? entry : `http://${entry}`).host.toLowerCase()
+      } catch {
+        return ''
+      }
+    })
+    .filter(Boolean)
+)
+
+/**
+ * 只信任 IP 字面量、localhost 与显式配置的域名。
+ * 不能只比较 Origin 与 Host 是否相等：DNS 重绑定后这两个值都来自攻击者域名。
+ */
+function isTrustedHost(hostHeader) {
+  if (!hostHeader) return false
+  const host = String(hostHeader).toLowerCase()
+  if (configuredHosts.has(host)) return true
+  let hostname
+  try {
+    hostname = new URL(`http://${host}`).hostname.toLowerCase()
+  } catch {
+    return false
+  }
+  const bare = hostname.replace(/^\[|\]$/g, '')
+  return bare === 'localhost' || net.isIP(bare) !== 0
+}
+
 /** 定长比较，避免通过响应时间猜令牌 */
 function safeEqual(a, b) {
   const bufA = Buffer.from(String(a))
@@ -52,40 +85,33 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(bufA, bufB)
 }
 
-/** 内存限流：只拦写操作。单机自托管够用，多实例部署请交给网关 */
-function createRateLimiter({ windowMs, max }) {
-  const hits = new Map()
-  // 定期清理，避免长时间运行后 Map 无限增长
-  const timer = setInterval(() => {
-    const now = Date.now()
-    for (const [key, entry] of hits) {
-      if (now - entry.start > windowMs) hits.delete(key)
-    }
-  }, windowMs)
-  timer.unref?.()
-
-  return (req, res, next) => {
-    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next()
-    const key = req.ip || 'unknown'
-    const now = Date.now()
-    const entry = hits.get(key)
-    if (!entry || now - entry.start > windowMs) {
-      hits.set(key, { start: now, count: 1 })
-      return next()
-    }
-    entry.count += 1
-    if (entry.count > max) {
-      res.setHeader('Retry-After', Math.ceil((windowMs - (now - entry.start)) / 1000))
-      return next(new AppError('请求过于频繁，请稍后再试', { status: 429, code: 'rate_limited' }))
-    }
-    next()
-  }
+/**
+ * 重读接口：全量导出/单会话导出都要把会话连同消息读进内存再序列化，
+ * 反复请求就是低成本 DoS。普通 GET 不限流，只给这两条单独的额度。
+ */
+const HEAVY_READ_RE = /^\/api\/conversations\/[^/]+\/export$/
+function isHeavyRead(req) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false
+  return req.path === '/api/export' || HEAVY_READ_RE.test(req.path)
 }
 
 export function createApp() {
   const app = express()
   app.disable('x-powered-by')
   if (config.server.trustProxy) app.set('trust proxy', 1)
+
+  // —— Host 白名单 ——
+  // 必须对所有请求生效（不只是带 Origin 的）：DNS 重绑定后浏览器认为目标同源，
+  // 连 CORS 都不参与，只靠 Origin/Host 比较拦不住。域名部署请配置 TRUSTED_HOSTS。
+  app.use((req, _res, next) => {
+    if (isTrustedHost(req.get('host'))) return next()
+    next(
+      new AppError(`Host 不在信任列表内（域名部署请设置 TRUSTED_HOSTS）：${req.get('host') || '(空)'}`, {
+        status: 403,
+        code: 'host_not_allowed',
+      })
+    )
+  })
 
   // —— 请求上下文与访问日志 ——
   app.use((req, res, next) => {
@@ -175,6 +201,12 @@ export function createApp() {
   // OpenAI 兼容网关：第三方客户端直接把 base_url 指到这里
   app.use('/v1', writeLimiter)
 
+  const exportLimiter = createRateLimiter({
+    ...config.limits.exportRate,
+    methods: new Set(['GET', 'HEAD']),
+  })
+  app.use((req, res, next) => (isHeavyRead(req) ? exportLimiter(req, res, next) : next()))
+
   // —— 登录相关路由（必须在「要求登录」之前挂） ——
   app.use('/api', authRoutes)
 
@@ -254,7 +286,7 @@ export function createApp() {
     }
     res.status(status).json({
       error: {
-        message: status >= 500 && err?.expose === false ? '服务器内部错误' : err?.message || '请求处理失败',
+        message: status >= 500 && err?.expose !== true ? '服务器内部错误' : err?.message || '请求处理失败',
         type,
         code,
       },

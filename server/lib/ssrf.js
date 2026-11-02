@@ -46,22 +46,49 @@ function ipv4Kind(host) {
   return 'public'
 }
 
-function ipv6Kind(host) {
-  const h = host.replace(/^\[|\]$/g, '').toLowerCase()
-  if (h === '::1') return 'loopback'
-  if (h === '::') return 'reserved'
-  // IPv4 映射地址（::ffff:127.0.0.1）
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(h)
-  if (mapped) return ipv4Kind(mapped[1])
-  // 十六进制写法的 IPv4 映射（::ffff:7f00:1 → 127.0.0.1）
-  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(h)
-  if (mappedHex) {
-    const hi = parseInt(mappedHex[1], 16)
-    const lo = parseInt(mappedHex[2], 16)
-    return ipv4Kind(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`)
+/**
+ * 展开成 8 个 16 位整数；非法返回 null。支持末尾内嵌 IPv4。
+ *
+ * 只认 `::ffff:7f00:1` 这种压缩写法是不够的——完整写法
+ * `0:0:0:0:0:ffff:7f00:1` 同样能连到 127.0.0.1，漏判就是一个 SSRF 绕过。
+ */
+function expandIpv6(host) {
+  let h = String(host || '').replace(/^\[|\]$/g, '').toLowerCase()
+  if (h.includes('.')) {
+    const idx = h.lastIndexOf(':')
+    if (idx < 0) return null
+    const v4 = parseIPv4(h.slice(idx + 1))
+    if (!v4) return null
+    h = h.slice(0, idx + 1) + `${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`
   }
-  if (/^f[cd]/.test(h)) return 'private' // fc00::/7
-  if (/^fe[89ab]/.test(h)) return 'link-local'
+  const parts = h.split('::')
+  if (parts.length > 2) return null
+  const left = parts[0] ? parts[0].split(':') : []
+  const right = parts.length === 2 && parts[1] ? parts[1].split(':') : []
+  const missing = 8 - left.length - right.length
+  if (parts.length === 1 ? left.length !== 8 : missing < 0) return null
+  const groups = parts.length === 2 ? [...left, ...Array(missing).fill('0'), ...right] : left
+  const nums = groups.map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN))
+  return nums.some((n) => Number.isNaN(n)) ? null : nums
+}
+
+function ipv6Kind(host) {
+  const g = expandIpv6(host)
+  if (!g) return 'reserved'
+  if (g.every((n) => n === 0)) return 'reserved'
+  if (g.slice(0, 7).every((n) => n === 0) && g[7] === 1) return 'loopback'
+
+  const hiZero = g.slice(0, 5).every((n) => n === 0)
+  const v4 = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`
+  // IPv4 映射 ::ffff:0:0/96
+  if (hiZero && g[5] === 0xffff) return ipv4Kind(v4(g[6], g[7]))
+  // IPv4 兼容 ::/96（::127.0.0.1 的历史写法），:: 与 ::1 已在上方排除
+  if (hiZero && g[5] === 0) return ipv4Kind(v4(g[6], g[7]))
+
+  if ((g[0] & 0xfe00) === 0xfc00) return 'private' // fc00::/7
+  if ((g[0] & 0xffc0) === 0xfe80) return 'link-local' // fe80::/10
+  if ((g[0] & 0xff00) === 0xff00) return 'reserved' // ff00::/8 组播
+  if (g[0] === 0x2001 && g[1] === 0x0db8) return 'reserved' // 2001:db8::/32 文档地址
   return 'public'
 }
 
@@ -123,14 +150,25 @@ export async function validateBaseUrl(raw, { timeoutMs = 3000, rejectPrivate = f
   if (net.isIP(host)) return inspected
 
   let addresses
+  let timer
   try {
     addresses = await Promise.race([
       dns.lookup(host, { all: true, verbatim: true }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('DNS 解析超时')), timeoutMs)),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('DNS 解析超时')), timeoutMs)
+      }),
     ])
+    if (!addresses.length) throw new Error('DNS 未返回任何地址')
   } catch (err) {
-    // 解析失败不代表一定有问题（离线环境、内网 DNS），放行但提示
-    return { ok: true, url: inspected.url, dnsError: err?.message || 'DNS 解析失败' }
+    const dnsError = err?.message || 'DNS 解析失败'
+    // 严格校验无法确认目标地址时必须拒绝，不能让后续 fetch 的 DNS 重试绕过检查。
+    if (rejectPrivate || STRICT) {
+      return { ok: false, reason: `无法验证 ${host} 的目标地址：${dnsError}`, dnsError }
+    }
+    // 默认保留离线/内网 DNS 配置场景的宽松策略，但向调用方提示。
+    return { ok: true, url: inspected.url, dnsError }
+  } finally {
+    clearTimeout(timer)
   }
 
   for (const { address } of addresses) {

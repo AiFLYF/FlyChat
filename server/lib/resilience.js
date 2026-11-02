@@ -1,4 +1,4 @@
-import { UpstreamError } from './errors.js'
+import { AppError, UpstreamError } from './errors.js'
 import { logger } from './logger.js'
 
 /**
@@ -10,29 +10,75 @@ import { logger } from './logger.js'
 
 /** 简单信号量：限制同时打给同一服务商的请求数，超出排队 */
 export class Semaphore {
-  constructor(max) {
+  constructor(max, { maxQueue = 100, waitTimeoutMs = 30_000 } = {}) {
     this.max = Math.max(1, max)
+    this.maxQueue = Math.max(1, maxQueue)
+    this.waitTimeoutMs = waitTimeoutMs
     this.active = 0
     this.queue = []
   }
 
-  async acquire() {
+  /**
+   * 排队必须可取消、有上限：
+   * 上游卡死时无界排队会拖住所有后续请求；客户端已经断开还占着队，
+   * 拿到槽位后照样去打上游并计费。
+   */
+  acquire({ signal, timeoutMs = this.waitTimeoutMs } = {}) {
+    if (signal?.aborted) {
+      return Promise.reject(new AppError('请求已取消', { status: 499, code: 'client_aborted' }))
+    }
     if (this.active < this.max) {
       this.active += 1
-      return
+      return Promise.resolve()
     }
-    await new Promise((resolve) => this.queue.push(resolve))
-    this.active += 1
+    if (this.queue.length >= this.maxQueue) {
+      return Promise.reject(
+        new UpstreamError('当前并发已满，请稍后重试', { status: 429, code: 'semaphore_queue_full', retryable: true })
+      )
+    }
+    return new Promise((resolve, reject) => {
+      let timer = null
+      const entry = { grant: null, fail: null, signal, onAbort: null }
+      const cleanup = () => {
+        if (timer) clearTimeout(timer)
+        timer = null
+        if (signal && entry.onAbort) signal.removeEventListener('abort', entry.onAbort)
+        const index = this.queue.indexOf(entry)
+        if (index >= 0) this.queue.splice(index, 1)
+      }
+      entry.grant = () => {
+        cleanup()
+        this.active += 1
+        resolve()
+      }
+      entry.fail = (err) => {
+        cleanup()
+        reject(err)
+      }
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          entry.fail(
+            new UpstreamError('等待上游并发槽位超时', { status: 503, code: 'semaphore_timeout', retryable: true })
+          )
+        }, timeoutMs)
+        timer.unref?.()
+      }
+      if (signal) {
+        entry.onAbort = () => entry.fail(new AppError('请求已取消', { status: 499, code: 'client_aborted' }))
+        signal.addEventListener('abort', entry.onAbort, { once: true })
+      }
+      this.queue.push(entry)
+    })
   }
 
   release() {
-    this.active -= 1
+    this.active = Math.max(0, this.active - 1)
     const next = this.queue.shift()
-    if (next) next()
+    if (next) next.grant()
   }
 
-  async run(fn) {
-    await this.acquire()
+  async run(fn, options) {
+    await this.acquire(options)
     try {
       return await fn()
     } finally {
@@ -98,6 +144,9 @@ export function isRetryable(err) {
     return s === 408 || s === 409 || s === 425 || s === 429 || s >= 500
   }
 
+  // bad port 是 fetch 在连接前拒绝的配置错误，原地址重试永远不会成功。
+  if (isBadPortError(err)) return false
+
   // undici 的网络错误统一是 TypeError: fetch failed，
   // cause 可能是单个错误，也可能是多地址尝试后的 AggregateError（errors 数组）
   if (err.name === 'TypeError' && /fetch failed/i.test(err.message || '')) return true
@@ -118,17 +167,28 @@ export function isRetryable(err) {
   ].some((code) => codes.has(code))
 }
 
-/** 递归收集错误链上的 code（undici 会套 cause / AggregateError.errors） */
-function errorCodes(err) {
-  const codes = new Set()
-  const collect = (e, depth = 0) => {
-    if (!e || depth > 3) return
-    if (e.code) codes.add(e.code)
-    if (Array.isArray(e.errors)) e.errors.forEach((x) => collect(x, depth + 1))
-    if (e.cause) collect(e.cause, depth + 1)
+/** 跨候选降级不同于原地址重试：熔断和坏端口可以换候选，但认证/额度错误仍不放宽。 */
+export function isFallbackEligible(err) {
+  if (!err || err.name === 'AbortError' || err instanceof UpstreamError) return isRetryable(err)
+  return err.code === 'provider_circuit_open' || isBadPortError(err) || isRetryable(err)
+}
+
+/** 递归遍历错误链（undici 会套 cause / AggregateError.errors），限制深度防止循环引用。 */
+function* errorChain(err, depth = 0) {
+  if (!err || depth > 3) return
+  yield err
+  if (Array.isArray(err.errors)) {
+    for (const nested of err.errors) yield* errorChain(nested, depth + 1)
   }
-  collect(err)
-  return codes
+  if (err.cause) yield* errorChain(err.cause, depth + 1)
+}
+
+function errorCodes(err) {
+  return new Set([...errorChain(err)].map((e) => e.code).filter(Boolean))
+}
+
+function isBadPortError(err) {
+  return [...errorChain(err)].some((e) => /^bad port$/i.test(e.message?.trim() || ''))
 }
 
 /**
@@ -148,21 +208,31 @@ export function describeUpstreamError(err, { providerName } = {}) {
   if (err?.name === 'AbortError') return '请求已取消'
   if (err instanceof UpstreamError) return err.message
 
-  if (/fetch failed/i.test(err?.message || '')) {
-    const codes = errorCodes(err)
-    const detail = codes.has('ECONNREFUSED')
-      ? '目标地址拒绝连接，通常是网关没启动或端口不对'
-      : codes.has('ENOTFOUND') || codes.has('EAI_AGAIN')
-        ? '域名解析失败，请检查 Base URL 是否写对'
-        : codes.has('UND_ERR_CONNECT_TIMEOUT') || codes.has('ETIMEDOUT')
-          ? '连接超时，请检查网络或代理'
-          : '网络不可达'
-    return `无法连接${who}的上游地址：${detail}`
+  // AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) 触发的是 TimeoutError 而不是 AbortError，
+  // 不走翻译就会把英文 DOMException 原文（"The operation was aborted due to timeout"）
+  // 直接怼到用户脸上
+  if (err?.name === 'TimeoutError' || /aborted due to timeout/i.test(err?.message || '')) {
+    return `${who}响应超时，请稍后重试或缩短问题长度`
   }
 
+  if (isBadPortError(err)) {
+    return `${who}的 Base URL 端口被 fetch 安全策略禁止，请在模型服务设置中改用允许的 HTTP/HTTPS 端口`
+  }
+
+  // 先看 cause 的具体原因，再兜底 fetch failed，避免连接中断被误报成网络不可达。
   const codes = errorCodes(err)
   if (codes.has('ECONNRESET') || codes.has('UND_ERR_SOCKET')) {
     return `与${who}的连接被中断，请重试`
+  }
+  const detail = codes.has('ECONNREFUSED')
+    ? '目标地址拒绝连接，通常是网关没启动或端口不对'
+    : codes.has('ENOTFOUND') || codes.has('EAI_AGAIN')
+      ? '域名解析失败，请检查 Base URL 是否写对'
+      : codes.has('UND_ERR_CONNECT_TIMEOUT') || codes.has('ETIMEDOUT')
+        ? '连接超时，请检查网络或代理'
+        : null
+  if (detail || /fetch failed/i.test(err?.message || '')) {
+    return `无法连接${who}的上游地址：${detail || '网络不可达'}`
   }
 
   return err?.message || '上游请求失败'
