@@ -107,6 +107,21 @@ test('登录：密码错不泄露账号是否存在', async () => {
   assert.equal(noSuchUser.body.code, 'invalid_credentials', '两种失败必须长得一样')
 })
 
+test('登录失败锁定按账号隔离，不会把同一出口的其他人一起锁死', async () => {
+  const target = 'lockout-probe'
+  for (let i = 0; i < 10; i += 1) {
+    const res = await anon.login(target, `wrong-${i}`)
+    assert.equal(res.status, 400, `第 ${i + 1} 次失败应为 400`)
+  }
+  const locked = await anon.login(target, 'still-wrong')
+  assert.equal(locked.status, 429)
+  assert.equal(locked.body.code, 'login_locked_out')
+
+  // 同一 IP 换个用户名必须还能登录（NAT 后面所有人共用出口 IP）
+  const admin = await anon.login('root', 'admin-pass-123')
+  assert.equal(admin.status, 200, JSON.stringify(admin.body))
+})
+
 test('管理员建普通用户，普通用户能登录但看不到别人的会话', async () => {
   const asAdmin = client(adminCookie)
   const created = await asAdmin.json('/api/users', {
@@ -249,26 +264,53 @@ test('/v1 也要登录（第三方客户端不能绕过）', async () => {
   assert.equal(body.error.type, 'authentication_error')
 })
 
-test('无主会话可以被管理员认领（单用户升级上来的场景）', async () => {
+test('无主会话/文件夹/知识库可以被管理员一起认领（单用户升级上来的场景）', async () => {
   const { getDb } = await import('../store/db.js')
   const db = getDb()
-  // 直接造一条没有归属的历史会话，模拟「多用户模式开启前就存在的数据」
+  const t = Date.now()
+  // 直接造一套没有归属的历史数据，模拟「多用户模式开启前就存在的数据」
   db.prepare(
-    `INSERT INTO conversations (id, title, pinned, using_context, created_at, updated_at, user_id)
-     VALUES ('conv-orphan-1', '老会话', 0, 1, ?, ?, NULL)`
-  ).run(Date.now(), Date.now())
+    `INSERT INTO conversations (id, title, pinned, using_context, created_at, updated_at, user_id, folder_id)
+     VALUES ('conv-orphan-1', '老会话', 0, 1, ?, ?, NULL, 'folder-orphan-1')`
+  ).run(t, t)
+  db.prepare(
+    `INSERT INTO folders (id, name, icon, sort_index, user_id, created_at, updated_at)
+     VALUES ('folder-orphan-1', '历史文件夹', NULL, NULL, NULL, ?, ?)`
+  ).run(t, t)
+  db.prepare(
+    `INSERT INTO workspaces (id, name, user_id, created_at, updated_at)
+     VALUES ('ws-orphan-1', '历史知识库', NULL, ?, ?)`
+  ).run(t, t)
 
   const asAdmin = client(adminCookie)
   const before = await asAdmin.json('/api/conversations/conv-orphan-1')
   assert.equal(before.status, 404, '无主会话默认对谁都不可见（宁可看不见也不越权）')
+  const foldersBefore = await asAdmin.json('/api/folders')
+  assert.ok(
+    !foldersBefore.body.items.some((f) => f.id === 'folder-orphan-1'),
+    '无主文件夹认领前同样不可见'
+  )
+  const wsBefore = await asAdmin.json('/api/workspaces')
+  assert.ok(
+    !wsBefore.body.items.some((w) => w.id === 'ws-orphan-1'),
+    '无主知识库认领前不可见'
+  )
 
   const claimed = await asAdmin.json('/api/conversations/claim-orphans', { method: 'POST' })
   assert.equal(claimed.status, 200)
   assert.ok(claimed.body.claimed >= 1)
+  assert.ok(claimed.body.claimedFolders >= 1, '文件夹必须一起认领，否则侧栏看不到会话所在的目录')
+  assert.ok(claimed.body.claimedWorkspaces >= 1, '知识库也要一起认领')
 
   const after = await asAdmin.json('/api/conversations/conv-orphan-1')
   assert.equal(after.status, 200)
   assert.equal(after.body.title, '老会话')
+  assert.equal(after.body.folderId, 'folder-orphan-1')
+
+  const foldersAfter = await asAdmin.json('/api/folders')
+  assert.ok(foldersAfter.body.items.some((f) => f.id === 'folder-orphan-1'))
+  const wsAfter = await asAdmin.json('/api/workspaces')
+  assert.ok(wsAfter.body.items.some((w) => w.id === 'ws-orphan-1'))
 })
 
 test('密码强度：太短直接拒绝', async () => {
@@ -405,6 +447,12 @@ test('自定义服务商与模型覆盖只允许 admin', async () => {
     body: { models: ['hack'] },
   })
   assert.equal(override.status, 403)
+
+  // 自检接口会带实例密钥请求上游：普通用户不能借它探测内网 / 读取回显
+  const probe = await asAlice.json('/api/providers/openai/test', { method: 'POST', body: {} })
+  assert.equal(probe.status, 403)
+  const remote = await asAlice.json('/api/providers/openai/remote-models')
+  assert.equal(remote.status, 403)
 })
 
 test('预算设置只允许 admin（预算是全实例的）', async () => {
@@ -542,6 +590,88 @@ test('知识库工作区按用户隔离，不能读取或删除别人的库', as
   await asAlice.json(`/api/workspaces/${aliceWs.body.id}`, { method: 'DELETE' })
 })
 
+test('会话同步与预设不能引用别人的文件夹或知识库', async () => {
+  const asAdmin = client(adminCookie)
+  const asAlice = client(aliceCookie)
+
+  const adminFolder = await asAdmin.json('/api/folders', { method: 'POST', body: { name: '管理员文件夹' } })
+  assert.equal(adminFolder.status, 201, JSON.stringify(adminFolder.body))
+  const adminWs = await asAdmin.json('/api/workspaces', { method: 'POST', body: { name: '管理员私有库' } })
+  assert.equal(adminWs.status, 201, JSON.stringify(adminWs.body))
+  const aliceFolder = await asAlice.json('/api/folders', { method: 'POST', body: { name: 'alice 文件夹' } })
+  assert.equal(aliceFolder.status, 201, JSON.stringify(aliceFolder.body))
+
+  // 正常同步：自己的文件夹要原样保留，不能因为加了校验就全部清掉
+  const own = await asAlice.json('/api/conversations', {
+    method: 'POST',
+    body: { id: 'conv-alice-folder', title: '自己的目录', folderId: aliceFolder.body.id, messages: [] },
+  })
+  assert.equal(own.status, 201, JSON.stringify(own.body))
+  assert.equal(own.body.folderId, aliceFolder.body.id)
+
+  // 同步时带别人的 folderId：落成未分类，但会话本身要保存成功
+  const cross = await asAlice.json('/api/conversations', {
+    method: 'POST',
+    body: { id: 'conv-cross-folder', title: '跨用户文件夹', folderId: adminFolder.body.id, messages: [] },
+  })
+  assert.equal(cross.status, 201, JSON.stringify(cross.body))
+  assert.equal(cross.body.folderId, undefined)
+
+  // 导入路径同样要清洗 folderId 与 tags（备份文件可能是别人导出的脏数据）
+  const imported = await asAlice.json('/api/import', {
+    method: 'POST',
+    body: {
+      conversations: [
+        {
+          id: 'conv-import-cross',
+          title: '导入脏数据',
+          folderId: adminFolder.body.id,
+          tags: [' 重要 ', '重要', ''],
+          messages: [],
+        },
+      ],
+    },
+  })
+  assert.equal(imported.status, 200)
+  assert.equal(imported.body.failed.length, 0)
+  const importedConv = await asAlice.json('/api/conversations/conv-import-cross')
+  assert.equal(importedConv.body.folderId, undefined)
+  assert.deepEqual(importedConv.body.tags, ['重要'])
+
+  // 预设绑定别人的知识库：字段直接丢弃，预设照常保存
+  const preset = await asAlice.json('/api/presets', {
+    method: 'POST',
+    body: { name: '跨用户知识库', workspaceId: adminWs.body.id },
+  })
+  assert.equal(preset.status, 201, JSON.stringify(preset.body))
+  assert.equal(preset.body.workspaceId, undefined)
+  const updated = await asAlice.json('/api/presets', {
+    method: 'POST',
+    body: { id: preset.body.id, workspaceId: adminWs.body.id },
+  })
+  assert.equal(updated.body.workspaceId, undefined)
+
+  // 复制无主共享预设：不能把管理员私有库一起带进 alice 的预设
+  const db = getDb()
+  db.prepare(
+    `INSERT INTO presets (id, name, workspace_id, user_id, created_at, updated_at)
+     VALUES ('preset-legacy-ws', '历史共享预设', ?, NULL, ?, ?)`
+  ).run(adminWs.body.id, Date.now(), Date.now())
+  const copy = await asAlice.json('/api/presets/preset-legacy-ws/duplicate', { method: 'POST', body: {} })
+  assert.equal(copy.status, 201, JSON.stringify(copy.body))
+  assert.equal(copy.body.workspaceId, undefined)
+
+  db.prepare('DELETE FROM presets WHERE id = ?').run('preset-legacy-ws')
+  await asAlice.json(`/api/presets/${preset.body.id}`, { method: 'DELETE' })
+  await asAlice.json(`/api/presets/${copy.body.id}`, { method: 'DELETE' })
+  await asAlice.json('/api/conversations/conv-alice-folder', { method: 'DELETE' })
+  await asAlice.json('/api/conversations/conv-cross-folder', { method: 'DELETE' })
+  await asAlice.json('/api/conversations/conv-import-cross', { method: 'DELETE' })
+  await asAlice.json(`/api/folders/${aliceFolder.body.id}`, { method: 'DELETE' })
+  await asAdmin.json(`/api/folders/${adminFolder.body.id}`, { method: 'DELETE' })
+  await asAdmin.json(`/api/workspaces/${adminWs.body.id}`, { method: 'DELETE' })
+})
+
 test('彻底删除用户：会话、文件夹、公开分享一起清理', async () => {
   const asAdmin = client(adminCookie)
   const created = await asAdmin.json('/api/users', {
@@ -577,6 +707,27 @@ test('彻底删除用户：会话、文件夹、公开分享一起清理', async
   })
   assert.equal(workspace.status, 201, JSON.stringify(workspace.body))
 
+  const preset = await asUser.json('/api/presets', {
+    method: 'POST',
+    body: { name: '待删除预设' },
+  })
+  assert.equal(preset.status, 201, JSON.stringify(preset.body))
+
+  // 待入库文档的源文件不在数据库里：删用户时也必须一并清掉，否则 uploads 会一直涨
+  const db = getDb()
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const { uploadPath } = await import('../rag/jobs.js')
+  const docId = 'doc-0123456789abcdef'
+  db.prepare(
+    `INSERT INTO documents (id, workspace_id, name, status, created_at, updated_at)
+     VALUES (?, ?, 'pending.txt', 'pending', ?, ?)`
+  ).run(docId, workspace.body.id, Date.now(), Date.now())
+  const pendingFile = uploadPath(docId)
+  fs.mkdirSync(path.dirname(pendingFile), { recursive: true })
+  fs.writeFileSync(pendingFile, 'pending upload')
+  assert.ok(fs.existsSync(pendingFile))
+
   const share = await asUser.json('/api/share', {
     method: 'POST',
     body: { conversationId: 'conv-delete-me' },
@@ -595,14 +746,15 @@ test('彻底删除用户：会话、文件夹、公开分享一起清理', async
   assert.equal((await anon.json(`/api/share/${share.body.id}`)).status, 404)
   assert.equal((await anon.login('delete-me', 'delete-pass-123')).status, 400)
 
-  // 数据库里不能留下该用户的会话/文件夹/分享/用量
-  const db = getDb()
+  // 数据库里不能留下该用户的会话/文件夹/分享/预设/用量
   const count = (sql, ...args) => db.prepare(sql).get(...args)?.n || 0
   assert.equal(count('SELECT COUNT(*) AS n FROM conversations WHERE user_id = ?', userId), 0)
   assert.equal(count('SELECT COUNT(*) AS n FROM folders WHERE user_id = ?', userId), 0)
   assert.equal(count('SELECT COUNT(*) AS n FROM shares WHERE user_id = ?', userId), 0)
   assert.equal(count('SELECT COUNT(*) AS n FROM workspaces WHERE user_id = ?', userId), 0)
+  assert.equal(count('SELECT COUNT(*) AS n FROM presets WHERE user_id = ?', userId), 0)
   assert.equal(count('SELECT COUNT(*) AS n FROM usage_events WHERE user_id = ?', userId), 0)
+  assert.equal(fs.existsSync(pendingFile), false, '未入库文档的源文件必须一起删除')
 })
 
 test('用量统计按用户隔离：普通用户看不到别人的花费', async () => {

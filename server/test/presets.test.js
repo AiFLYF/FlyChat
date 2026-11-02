@@ -87,6 +87,28 @@ test('参数校验：不认识的键丢掉，越界值夹紧', async (t) => {
   assert.equal(preset.params.mcpMode, 'selected')
 })
 
+test('预设绑定的知识库必须存在，否则不写入', async (t) => {
+  const bad = await (await post('/api/presets', { name: '坏绑定', workspaceId: 'ws-does-not-exist' })).json()
+  const good = await (await post('/api/presets', { name: '默认库绑定', workspaceId: 'default' })).json()
+  t.after(async () => {
+    await fetch(`${server.url}/api/presets/${bad.id}`, { method: 'DELETE' })
+    await fetch(`${server.url}/api/presets/${good.id}`, { method: 'DELETE' })
+  })
+  assert.equal(bad.workspaceId, undefined, '不存在的知识库不能落成悬空引用')
+  assert.equal(good.workspaceId, 'default')
+
+  const updated = await (await post('/api/presets', { id: good.id, workspaceId: 'ws-gone' })).json()
+  assert.equal(updated.workspaceId, undefined, '改成不存在的库同样要丢弃')
+
+  const copy = await (await post('/api/presets', { name: '待复制', workspaceId: 'ws-gone' })).json()
+  const duplicated = await (await post(`/api/presets/${copy.id}/duplicate`, {})).json()
+  t.after(async () => {
+    await fetch(`${server.url}/api/presets/${copy.id}`, { method: 'DELETE' })
+    await fetch(`${server.url}/api/presets/${duplicated.id}`, { method: 'DELETE' })
+  })
+  assert.equal(duplicated.workspaceId, undefined)
+})
+
 test('名称为空时拒绝创建（避免列表里出现无名条目）', async () => {
   const res = await post('/api/presets', { name: '   ' })
   assert.equal(res.status, 400)

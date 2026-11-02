@@ -58,6 +58,21 @@ test('title：生成短标题并清掉引号与句号', async (t) => {
   assert.equal(typeof body.costUsd, 'number')
 })
 
+test('小任务记账带上调用用户：多用户报表和删除用户都能对上账', async (t) => {
+  const { upstream, providerId } = await providerWith(['归属测试'])
+  t.after(() => upstream.close())
+
+  const { runTask } = await import('../lib/tasks.js')
+  const { getDb } = await import('../store/db.js')
+  await runTask('title', { text: '测试归属' }, { provider: providerId, model: 'mock-model', userId: 'user-attribution-test' })
+
+  const row = getDb()
+    .prepare('SELECT * FROM usage_events WHERE user_id = ? ORDER BY id DESC LIMIT 1')
+    .get('user-attribution-test')
+  assert.ok(row, 'usage_events 必须落下 userId，不能是 NULL')
+  assert.equal(row.kind, 'chat')
+})
+
 test('summary：生成摘要并压掉多余空白', async (t) => {
   const { upstream, providerId } = await providerWith(['讨论了限流方案，', '最终选了令牌桶。', '还没定容量。'])
   t.after(() => upstream.close())

@@ -133,6 +133,56 @@ test('被禁用的用户，令牌同样失效', async () => {
   await call(`/api/users/${aliceId}`, { method: 'PATCH', cookie: adminCookie, body: { disabled: false } })
 })
 
+test('改密码 / 管理员重置密码都会吊销已签发的 PAT', async () => {
+  const created = await call('/api/users', {
+    method: 'POST',
+    cookie: adminCookie,
+    body: { username: 'bob', password: 'bob-pass-123' },
+  })
+  const bob = await created.json()
+  assert.equal(created.status, 201, JSON.stringify(bob))
+
+  let login = await call('/api/auth/login', {
+    method: 'POST',
+    body: { username: 'bob', password: 'bob-pass-123' },
+  })
+  let bobCookie = (login.headers.get('set-cookie') || '').split(';')[0]
+  let issued = await (await call('/api/auth/token', { method: 'POST', cookie: bobCookie })).json()
+  assert.equal((await call('/api/conversations', { token: issued.token })).status, 200)
+
+  const changed = await call('/api/auth/password', {
+    method: 'POST',
+    cookie: bobCookie,
+    body: { oldPassword: 'bob-pass-123', newPassword: 'bob-pass-456' },
+  })
+  assert.equal(changed.status, 200, await changed.clone().text())
+  assert.equal(
+    (await call('/api/conversations', { token: issued.token })).status,
+    401,
+    '自己改密码后旧 PAT 不能继续用'
+  )
+
+  login = await call('/api/auth/login', {
+    method: 'POST',
+    body: { username: 'bob', password: 'bob-pass-456' },
+  })
+  bobCookie = (login.headers.get('set-cookie') || '').split(';')[0]
+  issued = await (await call('/api/auth/token', { method: 'POST', cookie: bobCookie })).json()
+  assert.equal((await call('/api/conversations', { token: issued.token })).status, 200)
+
+  const reset = await call(`/api/users/${bob.id}`, {
+    method: 'PATCH',
+    cookie: adminCookie,
+    body: { password: 'bob-pass-789' },
+  })
+  assert.equal(reset.status, 200, await reset.clone().text())
+  assert.equal(
+    (await call('/api/conversations', { token: issued.token })).status,
+    401,
+    '管理员重置密码后旧 PAT 不能继续用'
+  )
+})
+
 test('令牌不出现在任何接口的响应里（只有明文那一次）', async () => {
   const issued = await (await call('/api/auth/token', { method: 'POST', cookie: adminCookie })).json()
   const me = await (await call('/api/auth/me', { cookie: adminCookie })).text()

@@ -145,6 +145,50 @@ test('POST /v1/chat/completions：工具调用按标准格式透传（由调用�
   assert.equal(call.type, 'function')
   assert.equal(call.function.name, 'get_weather')
   assert.deepEqual(JSON.parse(call.function.arguments), { city: '北京' })
+
+  // 关键：转发给上游的 tools 必须是适配器认识的扁平结构。
+  // 之前把 OpenAI 的 {type:'function', function:{...}} 原样透传，name 会变成 undefined。
+  const sent = toolUpstream.state.lastBody.tools
+  assert.equal(sent[0].function.name, 'get_weather')
+  assert.equal(sent[0].function.description, '查天气')
+  assert.deepEqual(sent[0].function.parameters, {
+    type: 'object',
+    properties: { city: { type: 'string' } },
+  })
+})
+
+test('历史消息里的 OpenAI 形状 tool_calls 会转换后再发给上游', async () => {
+  const res = await v1('/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: `${providerId}:mock-model`,
+      messages: [
+        { role: 'user', content: '北京天气' },
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'get_weather', arguments: '{"city":"北京"}' },
+            },
+          ],
+        },
+        { role: 'tool', tool_call_id: 'call_1', content: '{"temp":20}' },
+      ],
+    }),
+  })
+  assert.equal(res.status, 200, await res.clone().text())
+
+  // 适配器内部按 tc.name / tc.arguments 取值；不转换的话上游收到的是空函数名
+  const sent = upstream.state.lastBody.messages
+  assert.equal(sent[1].tool_calls[0].id, 'call_1')
+  assert.equal(sent[1].tool_calls[0].function.name, 'get_weather')
+  assert.equal(sent[1].tool_calls[0].function.arguments, '{"city":"北京"}')
+  assert.equal(sent[2].role, 'tool')
+  assert.equal(sent[2].tool_call_id, 'call_1')
 })
 
 test('未知模型：返回 OpenAI 风格的 404 错误', async () => {

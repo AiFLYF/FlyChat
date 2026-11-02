@@ -131,6 +131,69 @@ test('超长历史：自动裁剪并发出 notice', async (t) => {
 
 })
 
+test('超长单条消息：只提示压缩内容，不谎报省略 0 条', async (t) => {
+  const upstream = await startMockUpstream()
+  t.after(() => upstream.close())
+  const providerId = await createProvider(upstream.baseUrl, ['mock-8k'])
+
+  const events = await readSse(await chat({
+    provider: providerId,
+    model: 'mock-8k',
+    messages: [{ role: 'user', content: '超长原文。'.repeat(5000) }],
+  }))
+  const meta = events.find((e) => e.type === 'meta')
+  assert.equal(meta.context.dropped, 0)
+  assert.ok(meta.context.truncated > 0)
+
+  const notice = events.find((e) => e.type === 'notice')
+  assert.ok(notice, '截断后应提示用户')
+  assert.match(notice.message, /压缩了部分过长内容/)
+  assert.doesNotMatch(notice.message, /省略最早的 0 条/)
+  assert.equal(events.at(-1).type, 'done')
+})
+
+test('图片固定开销超预算：写 SSE 头前返回 JSON 400，服务仍可用', async (t) => {
+  const upstream = await startMockUpstream()
+  t.after(() => upstream.close())
+  const provider = await createProvider(upstream.baseUrl, ['mock-8k'])
+  const response = await chat({
+    provider, model: 'mock-8k',
+    messages: [{ role: 'user', content: '分析图片', attachments: Array.from({ length: 8 }, (_, i) => ({
+      id: `image-${i}`, type: 'image', dataUrl: 'data:image/png;base64,AA==',
+    })) }],
+  })
+  assert.equal(response.status, 400)
+  assert.equal((await response.json()).code, 'context_overflow')
+  assert.equal(upstream.state.hits, 0)
+  const next = await readSse(await chat({ provider, model: 'mock-8k', messages: [{ role: 'user', content: 'hi' }] }))
+  assert.equal(next.at(-1).type, 'done')
+})
+
+test('补充思考提示后重新预算，中文系统和正文仍在窗口内', async (t) => {
+  const { estimateTokens, estimateMessagesTokens } = await import('../lib/tokens.js')
+  const upstream = await startMockUpstream()
+  t.after(() => upstream.close())
+  const provider = await createProvider(upstream.baseUrl, ['mock-8k'])
+  const events = await readSse(await chat({
+    provider, model: 'mock-8k', system: '请认真解答。'.repeat(1000), think: true,
+    messages: [{ role: 'user', content: '详细说明。'.repeat(1500) }],
+  }))
+  assert.equal(events.at(-1).type, 'done')
+  const sent = upstream.state.lastBody
+  const system = sent.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n')
+  const messages = sent.messages.filter((m) => m.role !== 'system')
+  const budget = 8000 - sent.max_tokens - Math.ceil(8000 * 0.05)
+  assert.ok(estimateTokens(system) + estimateMessagesTokens(messages) <= budget)
+  const metas = events.filter((event) => event.type === 'meta')
+  assert.ok(metas.length >= 2)
+  assert.ok(metas.at(-1).contextTokens <= budget)
+  for (const meta of metas) {
+    assert.equal(meta.model, 'mock-8k')
+    assert.equal(meta.provider, provider)
+    assert.equal(typeof meta.latencyMs, 'number')
+  }
+})
+
 test('参数越界：温度、topP、maxTokens 会被夹到合法区间', async (t) => {
   const upstream = await startMockUpstream()
   t.after(() => upstream.close())

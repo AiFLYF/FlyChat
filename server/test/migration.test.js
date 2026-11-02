@@ -171,6 +171,29 @@ test('v9 库升级：shares 表已存在时补上 user_id（分享按用户隔�
   assert.equal(db.prepare('SELECT COUNT(*) c FROM shares').get().c, 1)
 })
 
+test('老库升级：presets 补上 user_id，旧预设保留为无主共享', () => {
+  const db = oldSchemaDb()
+  // 模拟加归属隔离之前的 presets 表
+  db.exec(`
+    CREATE TABLE presets (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, icon TEXT,
+      provider TEXT, model TEXT, system_prompt TEXT, params TEXT, workspace_id TEXT,
+      mcp_servers TEXT, sort_index INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    INSERT INTO presets (id, name, params, created_at, updated_at)
+    VALUES ('preset-old', '老预设', '{}', 1, 1);
+  `)
+  assert.doesNotThrow(() => migrateSchema(db))
+  assert.ok(columns(db, 'presets').includes('user_id'), 'presets 必须补上 user_id 列')
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM presets').get().c, 1)
+  assert.equal(db.prepare('SELECT user_id FROM presets WHERE id = ?').get('preset-old').user_id, null)
+  const indexes = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='index'")
+    .all()
+    .map((r) => r.name)
+  assert.ok(indexes.includes('idx_preset_user'))
+})
+
 test('极老的库（只有 conversations）也能安全迁移，不因缺表而崩', () => {
   const db = new DatabaseSync(':memory:')
   db.exec(`

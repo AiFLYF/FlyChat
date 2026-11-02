@@ -101,6 +101,15 @@ test('参数校验：不合法配置返回 400 而不是 500', async () => {
 
   const badUrl = await post('/api/mcp/servers', { name: 'x', transport: 'http', baseUrl: 'ftp://x' })
   assert.equal(badUrl.status, 400)
+
+  // 云元数据 / 链路本地地址一律拒绝：HTTP transport 会被服务端直接请求
+  const metadataRes = await post('/api/mcp/servers', {
+    name: 'x',
+    transport: 'http',
+    baseUrl: 'http://169.254.169.254/latest/meta-data/',
+  })
+  assert.equal(metadataRes.status, 400)
+  assert.equal((await metadataRes.json()).code, 'invalid_base_url')
 })
 
 test('启用后工具进入 agent 工具箱，且带命名空间', async (t) => {

@@ -22,6 +22,7 @@ export function prepareEnv(extra = {}) {
   // 清掉可能影响断言的宿主环境变量
   delete process.env.FLYCHAT_ACCESS_TOKEN
   delete process.env.CORS_ORIGINS
+  delete process.env.TRUSTED_HOSTS
   delete process.env.TAVILY_API_KEY
   delete process.env.BRAVE_API_KEY
   delete process.env.SERPER_API_KEY
@@ -36,6 +37,11 @@ export async function listen(app) {
   const server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s))
   })
+  // 与生产入口保持一致：默认 5s 的 keepAliveTimeout 会让测试里的
+  // undici 连接池复用到服务端已关闭的 socket，间歇性 ECONNRESET
+  const { config } = await import('../../config.js')
+  server.keepAliveTimeout = config.server.keepAliveTimeoutMs
+  server.headersTimeout = config.server.headersTimeoutMs
   const { port } = server.address()
   return {
     url: `http://127.0.0.1:${port}`,

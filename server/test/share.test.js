@@ -99,6 +99,28 @@ test('分享密码：没密码 401，密码正确 200，错误 401', async () =>
   await fetch(`${server.url}/api/share/${share.id}`, { method: 'DELETE' })
 })
 
+test('分享密码：连续错误会锁定该链接，其它分享不受影响', async () => {
+  const created = await post('/api/share', { conversationId: 'conv-share-1', password: 'right-pass' })
+  const share = await created.json()
+
+  let last
+  for (let i = 0; i < 8; i += 1) {
+    last = await fetch(`${server.url}/api/share/${share.id}?password=wrong-${i}`)
+  }
+  assert.equal(last.status, 401, '前 8 次错误应返回密码错误')
+
+  const locked = await fetch(`${server.url}/api/share/${share.id}?password=right-pass`)
+  assert.equal(locked.status, 429, '超过上限后即使密码正确也要先等待')
+  assert.equal((await locked.json()).code, 'share_locked_out')
+
+  // 限流按「IP + 分享 id」生效，别的分享不能被连坐
+  const other = await (await post('/api/share', { conversationId: 'conv-share-1', password: 'right-pass' })).json()
+  assert.equal((await fetch(`${server.url}/api/share/${other.id}?password=right-pass`)).status, 200)
+
+  await fetch(`${server.url}/api/share/${share.id}`, { method: 'DELETE' })
+  await fetch(`${server.url}/api/share/${other.id}`, { method: 'DELETE' })
+})
+
 test('分享列表：不含消息正文', async () => {
   const created = await post('/api/share', { conversationId: 'conv-share-1' })
   const share = await created.json()

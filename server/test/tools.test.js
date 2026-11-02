@@ -1,5 +1,6 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import dns from 'node:dns/promises'
 import { prepareEnv, listen, readSse, loadApp} from './helpers/setup.js'
 import { startMockUpstream } from './helpers/mock-upstream.js'
 
@@ -73,6 +74,7 @@ test('fetch_url：拒绝内网与云元数据地址（防模型被诱导）', as
 })
 
 test('fetch_url：重定向跳到内网/元数据必须被拦（逐跳校验）', async (t) => {
+  t.mock.method(dns, 'lookup', async () => [{ address: '93.184.216.34', family: 4 }])
   const realFetch = globalThis.fetch
   t.after(() => {
     globalThis.fetch = realFetch
@@ -90,6 +92,7 @@ test('fetch_url：重定向跳到内网/元数据必须被拦（逐跳校验）'
 })
 
 test('fetch_url：公网 → 公网的重定向正常跟随并解析正文', async (t) => {
+  t.mock.method(dns, 'lookup', async () => [{ address: '93.184.216.34', family: 4 }])
   const realFetch = globalThis.fetch
   t.after(() => {
     globalThis.fetch = realFetch
@@ -130,6 +133,7 @@ test('agent 循环：模型调工具 → 服务端执行 → 模型继续作答�
       model: 'mock-model',
       messages: [{ role: 'user', content: '现在几点了？' }],
       tools: true,
+      maxTokens: 16,
     })
   )
   const types = events.map((e) => e.type)
@@ -152,6 +156,7 @@ test('agent 循环：模型调工具 → 服务端执行 → 模型继续作答�
   // 第二次请求必须带上工具结果，模型才知道工具返回了什么
   assert.equal(upstream.state.hits, 2)
   const second = upstream.state.lastBody
+  assert.equal(second.max_tokens, 16, '工具后续轮次也必须遵守输出上限')
   assert.ok(second.tools?.length, '第二轮仍要带工具定义')
   const toolMessage = second.messages.find((m) => m.role === 'tool')
   assert.ok(toolMessage, '第二轮必须包含 role=tool 的消息')
@@ -179,6 +184,7 @@ test('agent 循环：Anthropic 协议的 tool_use 增量也能正确拼装', asy
       model: 'mock-model',
       messages: [{ role: 'user', content: '上海现在几点' }],
       tools: true,
+      maxTokens: 16,
     })
   )
   const call = events.find((e) => e.type === 'tool_call')
@@ -191,6 +197,7 @@ test('agent 循环：Anthropic 协议的 tool_use 增量也能正确拼装', asy
 
   // 第二轮里 Anthropic 要求 tool_result 是 user 消息里的 block
   const second = upstream.state.lastBody
+  assert.equal(second.max_tokens, 16, 'Anthropic 工具轮次不能退回默认输出上限')
   const hasToolResult = JSON.stringify(second.messages).includes('tool_result')
   assert.ok(hasToolResult, 'Anthropic 第二轮必须包含 tool_result block')
 })
@@ -214,6 +221,52 @@ test('不支持工具的模型：降级为普通对话并提示', async (t) => {
   assert.match(notice.message, /不支持工具调用/)
   assert.equal(events.at(-1).type, 'done')
   assert.equal(upstream.state.lastBody.tools, undefined, '降级后不应带 tools')
+})
+
+for (const type of ['openai-compat', 'anthropic']) {
+  for (const forcedFinal of [false, true]) {
+    test(`工具输出上限：${type} ${forcedFinal ? '强制收尾' : '首轮'}沿用请求预算`, async (t) => {
+      const upstream = await startMockUpstream({
+        toolPlan: forcedFinal ? [
+          { toolCalls: [{ name: 'current_time', arguments: {} }] },
+          { toolCalls: [{ name: 'current_time', arguments: {} }] },
+          { text: '已完成' },
+        ] : [{ text: '无需工具即可回答' }],
+      })
+      t.after(() => upstream.close())
+      const provider = await createProvider(upstream.baseUrl, type)
+      const events = await readSse(await chat({
+        provider, model: 'mock-model', messages: [{ role: 'user', content: '你好' }],
+        tools: true, maxTokens: 16,
+      }))
+      assert.equal(events.at(-1).type, 'done')
+      assert.equal(upstream.state.hits, forcedFinal ? 3 : 1)
+      assert.equal(upstream.state.lastBody.max_tokens, 16)
+      if (forcedFinal) assert.equal(upstream.state.lastBody.tools, undefined)
+    })
+  }
+}
+
+test('追加上下文的 meta 保留当前预设和模型', async (t) => {
+  const upstream = await startMockUpstream()
+  t.after(() => upstream.close())
+  const provider = await createProvider(upstream.baseUrl)
+  const response = await fetch(`${server.url}/api/presets`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '元数据回归', provider, model: 'mock-model', params: { think: true, tools: true } }),
+  })
+  assert.equal(response.status, 201)
+  const preset = await response.json()
+  const events = await readSse(await chat({ presetId: preset.id, messages: [{ role: 'user', content: '你好' }] }))
+  assert.equal(events.at(-1).type, 'done')
+  const metas = events.filter((event) => event.type === 'meta')
+  assert.ok(metas.length >= 2)
+  for (const meta of metas) {
+    assert.equal(meta.model, 'mock-model')
+    assert.equal(meta.preset.id, preset.id)
+    assert.equal(meta.preset.name, '元数据回归')
+    assert.equal(typeof meta.latencyMs, 'number')
+  }
 })
 
 test('TOOLS 表里的每个工具名与定义名一致', () => {

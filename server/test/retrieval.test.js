@@ -157,6 +157,29 @@ test('向量化失败（queryVector=null）时退化为纯关键词，不崩', (
   assert.ok(results[0].keywordScore > 0)
 })
 
+test('大知识库：候选池有界，但高分块不会被挤出', () => {
+  const bigWs = 'ws-big-rank'
+  db.prepare('INSERT OR REPLACE INTO workspaces (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)').run(
+    bigWs,
+    '大库排序',
+    Date.now(),
+    Date.now()
+  )
+  db.prepare('DELETE FROM chunks WHERE workspace_id = ?').run(bigWs)
+  db.prepare('DELETE FROM documents WHERE workspace_id = ?').run(bigWs)
+
+  const filler = Array.from({ length: 319 }, (_, i) => ({ heading: '杂项', text: `无关内容第 ${i} 段` }))
+  filler.push({ heading: '原理', text: 'HNSW 是分层可导航小世界图，用于近似最近邻搜索。' })
+  seedFor(bigWs, { docId: 'big-doc', docName: '大库.md', chunks: filler })
+
+  const query = 'HNSW'
+  const out = search(bigWs, embed(query), { query, topK: 3, minScore: 0, debug: true })
+  assert.equal(out.total, 320, '必须统计全部参与打分的块')
+  assert.equal(out.passed, 320)
+  assert.equal(out.chunks[0].text.includes('HNSW'), true, '高分块不能被有界候选池挤掉')
+  assert.ok(out.candidates.length <= 40, '调试候选仍只回传前 40 条')
+})
+
 test('空知识库返回空结果而不是报错', () => {
   db.prepare('INSERT OR REPLACE INTO workspaces (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)').run(
     'ws-empty',

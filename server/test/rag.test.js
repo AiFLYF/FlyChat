@@ -379,3 +379,38 @@ test('删除知识库工作区：源文件也要一起清理', async () => {
   assert.equal(del.status, 200)
   assert.ok(!fs.existsSync(file), '工作区删除后源文件必须一起删掉，否则会一直占磁盘')
 })
+
+test('启动清理：孤儿上传文件与过期失败文件会被删，新失败文件保留重试', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const { config } = await import('../config.js')
+  const { cleanupOrphanUploads, uploadPath } = await import('../rag/jobs.js')
+
+  const dir = path.join(config.storage.dataDir, 'uploads')
+  fs.mkdirSync(dir, { recursive: true })
+  const orphanId = 'doc-' + 'f'.repeat(16)
+  fs.writeFileSync(path.join(dir, orphanId), 'orphan')
+
+  const binary = Buffer.from(Array.from({ length: 513 }, (_, i) => (i * 7) % 256)).toString('base64')
+  const created = await post('/api/documents', {
+    name: '待清理-失败.bin',
+    mime: 'application/octet-stream',
+    dataUrl: `data:application/octet-stream;base64,${binary}`,
+  })
+  const submitted = await created.json()
+  const done = await waitForDocument(submitted.id)
+  assert.equal(done.status, 'failed')
+  const failedFile = uploadPath(submitted.id)
+  assert.ok(fs.existsSync(failedFile), '失败后源文件应保留供重试')
+
+  cleanupOrphanUploads()
+  assert.ok(!fs.existsSync(path.join(dir, orphanId)), '没有数据库行的孤儿文件必须清掉')
+  assert.ok(fs.existsSync(failedFile), '保留期内的失败文件不能清')
+
+  const old = new Date(Date.now() - 30 * 24 * 3600 * 1000)
+  fs.utimesSync(failedFile, old, old)
+  cleanupOrphanUploads()
+  assert.ok(!fs.existsSync(failedFile), '超过保留期的失败文件应清掉')
+
+  await fetch(`${server.url}/api/documents/${submitted.id}`, { method: 'DELETE' })
+})

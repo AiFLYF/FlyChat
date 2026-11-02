@@ -1,5 +1,6 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import http from 'node:http'
 import { prepareEnv, listen, loadApp} from './helpers/setup.js'
 
 prepareEnv()
@@ -404,6 +405,92 @@ test('CORS：默认拒绝任意公网来源，同源与本机来源放行', asyn
   assert.equal(local.status, 200, '本机 Vite 前端必须放行')
 })
 
+test('Host 白名单：拒绝 DNS 重绑定域名，IP 与 localhost 放行', async () => {
+  const request = (host) =>
+    new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          host: '127.0.0.1',
+          port: server.port,
+          path: '/api/health',
+          headers: { Host: host, Origin: `http://${host}` },
+        },
+        (res) => {
+          let body = ''
+          res.on('data', (chunk) => {
+            body += chunk
+          })
+          res.on('end', () => resolve({ status: res.statusCode, body }))
+        }
+      )
+      req.on('error', reject)
+      req.end()
+    })
+
+  // 攻击者域名解析到 127.0.0.1 时，Origin 与 Host 都是攻击者域名，旧逻辑会放行
+  const rebound = await request('evil.example')
+  assert.equal(rebound.status, 403)
+  assert.equal(JSON.parse(rebound.body).code, 'host_not_allowed')
+
+  const loopback = await request(`127.0.0.1:${server.port}`)
+  assert.equal(loopback.status, 200)
+
+  const named = await request(`localhost:${server.port}`)
+  assert.equal(named.status, 200)
+})
+
+test('500 错误不回显内部异常原文，4xx 保留可读消息', async () => {
+  const { toErrorResponse, AppError } = await import('../lib/errors.js')
+
+  const native = toErrorResponse(new Error('SQLITE_ERROR: no such column: secret_col'))
+  assert.equal(native.status, 500)
+  assert.equal(native.body.error, '服务器内部错误')
+
+  const app500 = toErrorResponse(new AppError('数据库挂了：表名 secret', { status: 503, code: 'db_down' }))
+  assert.equal(app500.body.error, '服务器内部错误')
+  assert.equal(app500.body.code, 'db_down')
+
+  const clientError = toErrorResponse(new AppError('参数不对', { status: 400, code: 'bad_request' }))
+  assert.equal(clientError.body.error, '参数不对')
+})
+
+test('PUT messages：条数与单条长度有上限', async () => {
+  const create = await api('/api/conversations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: 'conv-message-limits', title: '上限测试' }),
+  })
+  assert.equal(create.status, 201)
+
+  const tooMany = await json(
+    await api('/api/conversations/conv-message-limits/messages', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        replace: true,
+        messages: Array.from({ length: 201 }, (_, i) => ({ id: `limit-${i}`, role: 'user', content: 'x' })),
+      }),
+    })
+  )
+  assert.equal(tooMany.status, 400)
+  assert.equal(tooMany.body.code, 'too_many_messages')
+
+  const tooLong = await json(
+    await api('/api/conversations/conv-message-limits/messages', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        replace: true,
+        messages: [{ id: 'limit-long', role: 'user', content: 'x'.repeat(200_001) }],
+      }),
+    })
+  )
+  assert.equal(tooLong.status, 400)
+  assert.equal(tooLong.body.code, 'message_too_long')
+
+  await api('/api/conversations/conv-message-limits', { method: 'DELETE' })
+})
+
 test('默认单用户模式：不需要登录，/api/auth/me 明确说 multiUser=false', async () => {
   const me = await json(await api('/api/auth/me'))
   assert.equal(me.status, 200)
@@ -422,6 +509,14 @@ test('默认单用户模式：不需要登录，/api/auth/me 明确说 multiUser
   })
   assert.equal(setup.status, 400)
   assert.equal((await setup.json()).code, 'multi_user_disabled')
+})
+
+test('keepAliveTimeout 高于 Node 默认 5s，避免客户端复用到半死连接', async () => {
+  // Node 默认 keepAliveTimeout=5000ms：服务端先静默关空闲 socket，
+  // undici/浏览器下一拍复用这条半死连接就 ECONNRESET（这个测试文件曾经因此间歇挂掉）。
+  const { config } = await import('../config.js')
+  assert.ok(config.server.keepAliveTimeoutMs > 5000, 'keepAliveTimeout 必须高于常见客户端空闲容忍')
+  assert.ok(config.server.headersTimeoutMs > config.server.keepAliveTimeoutMs, 'headersTimeout 必须大于 keepAliveTimeout')
 })
 
 test('全量导出：超过单页 200 条也不截断', async () => {
@@ -443,4 +538,20 @@ test('全量导出：超过单页 200 条也不截断', async () => {
   assert.equal(payload.format, 'flychat-export')
   assert.ok(payload.count >= total, `应导出全部会话，实际 ${payload.count}`)
   assert.ok(payload.conversations.some((c) => c.id === 'conv-export-204'), '最后一条也必须在内')
+})
+
+test('重读限流：/api/export 反复调用会 429，普通 GET 不受影响', async () => {
+  let last
+  for (let i = 0; i < 25; i += 1) last = await api('/api/export')
+  assert.equal(last.status, 429, '全量导出必须单独限流：每次都要把全部会话读进内存')
+  assert.equal((await last.json()).code, 'rate_limited')
+  assert.ok(Number(last.headers.get('retry-after')) >= 1, '429 应带 Retry-After')
+
+  // 普通读接口不在这份额度里，不能被牵连
+  const list = await api('/api/conversations')
+  assert.equal(list.status, 200)
+
+  // 单会话导出同一份额度
+  const one = await api('/api/conversations/conv-export-0/export?format=json')
+  assert.equal(one.status, 429)
 })
