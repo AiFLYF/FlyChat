@@ -154,6 +154,18 @@ const MessageItem = memo(function MessageItem({
   useDismiss(rewriteRef, () => setRewriteMenuOpen(false), rewriteMenuOpen)
   const enterCls = enter ? 'anim-fade-up ' : ''
 
+  // 慢网等待提示：streaming 但还没有任何输出时，只有一个光标在闪，用户无法区分
+  // 「模型在思考」和「请求卡住了」。12s 无输出后补充文字说明（上游丢包重试时尤其常见）。
+  const [slowWait, setSlowWait] = useState(false)
+  useEffect(() => {
+    if (!streaming || message.content || message.reasoning) {
+      setSlowWait(false)
+      return
+    }
+    const t = setTimeout(() => setSlowWait(true), 12_000)
+    return () => clearTimeout(t)
+  }, [streaming, message.content, message.reasoning])
+
   useEffect(() => {
     if (rewriteMenuOpen && !cachedTones) {
       fetchTasksInfo()
@@ -342,6 +354,11 @@ const MessageItem = memo(function MessageItem({
               />
             )}
             <LazyMarkdown content={message.content} />
+            {streaming && !message.content && !message.reasoning && (
+              <div role="status" className="py-1 text-xs text-ink-3">
+                正在等待模型响应{slowWait ? '（上游响应较慢，仍在等待）' : '…'}
+              </div>
+            )}
             {streaming && (
               // deslop-ignore-next-line 16 流式输出光标是功能性指示器
               <span className="stream-caret ml-0.5 inline-block h-[18px] w-[7px] rounded-[2px] bg-accent align-middle" />
