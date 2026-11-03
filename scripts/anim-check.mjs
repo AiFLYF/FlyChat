@@ -122,29 +122,38 @@ async function seedSettings(page, providerId) {
     await page.waitForSelector('textarea', { timeout: 120000 })
     await page.waitForTimeout(1500)
 
+    // 长度采样改在页面内做：Node 侧 80ms 轮询 + evaluate 往返约 120-150ms/次，
+    // mock 连接预热后整个流式窗口只有 ~1s，轮询只能抓到 2 次递增（假失败）。
+    // MutationObserver 直接记 DOM 变更，粒度与 rAF 合帧 flush 对齐，与环境速度无关。
+    await page.evaluate(() => {
+      window.__lens = []
+      const measure = () => {
+        const nodes = document.querySelectorAll('.markdown-body, .whitespace-pre-wrap')
+        const len = nodes.length ? nodes[nodes.length - 1].textContent.length : 0
+        if (!window.__lens.length || window.__lens[window.__lens.length - 1] !== len) window.__lens.push(len)
+      }
+      window.__obs = new MutationObserver(measure)
+      window.__obs.observe(document.body, { childList: true, subtree: true, characterData: true })
+    })
+
     await page.locator('textarea').first().fill('你好')
     await page.keyboard.press('Enter')
 
-    // 气泡在 Markdown chunk 加载完之前是 .whitespace-pre-wrap 纯文本兜底，
-    // 之后是 .markdown-body 渲染态——两种都算「内容」，增量看 textContent 增长。
-    const bubbleText = () =>
-      page.evaluate(() => {
-        const nodes = document.querySelectorAll('.markdown-body, .whitespace-pre-wrap')
-        return nodes.length ? nodes[nodes.length - 1].textContent.length : 0
-      })
-    // 采样整个流式过程直到光标消失（= 流真正结束），不能按内容提前跳出
-    const lengths = []
+    // 光标出现再消失 = 流式完整跑完一轮；期间不采样，只等终态
     let caretSeen = false
     for (let i = 0; i < 250; i += 1) {
       const caretNow = await page.evaluate(() => !!document.querySelector('.stream-caret'))
       if (caretNow) caretSeen = true
-      lengths.push(await bubbleText())
-      if (caretSeen && !caretNow) break // 光标消失 = 流式结束
+      if (caretSeen && !caretNow) break
       await page.waitForTimeout(80)
     }
+    const lengths = await page.evaluate(() => {
+      window.__obs?.disconnect()
+      return window.__lens || []
+    })
     const increasing = lengths.filter((v, i) => i > 0 && v > lengths[i - 1]).length
-    const finalLen = lengths[lengths.length - 1]
-    console.log(`stream: samples=${lengths.length} 递增次数=${increasing} final=${finalLen} caret=${caretSeen}`)
+    const finalLen = lengths.length ? Math.max(...lengths) : 0
+    console.log(`stream: 变更点=${lengths.length} 递增次数=${increasing} final=${finalLen} caret=${caretSeen}`)
     if (increasing < 3) errors.push(`[stream] 打字机节奏缺失（文本只增长了 ${increasing} 次），增量渲染没生效`)
     if (finalLen < 20) errors.push(`[stream] 最终内容过短（${finalLen} 字符），流式可能没完成`)
     if (!caretSeen) errors.push('[stream] 流式期间没有出现 .stream-caret 光标')
