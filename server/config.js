@@ -185,6 +185,11 @@ export const config = {
     breakerCooldownMs: readInt('BREAKER_COOLDOWN_MS', 30_000, 1000, 600_000),
     /** SSE 心跳间隔，避免反代/网关掐断长连接 */
     heartbeatMs: readInt('SSE_HEARTBEAT_MS', 15_000, 1000, 120_000),
+    /**
+     * 部分中转网关按 User-Agent 过滤客户端（例如 python 默认 UA 直接 403）。
+     * 遇到这类上游时把 UPSTREAM_USER_AGENT 设为浏览器 UA；默认不加该头。
+     */
+    userAgent: (process.env.UPSTREAM_USER_AGENT || '').trim(),
   },
 
   context: {

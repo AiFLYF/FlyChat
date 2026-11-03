@@ -106,7 +106,7 @@ export async function startMockUpstream(options = {}) {
     imageStatus = 200,
   } = options
 
-  const state = { hits: 0, lastBody: null, lastAuth: null, aborted: 0, imageHits: 0, lastImageBody: null }
+  const state = { hits: 0, lastBody: null, lastAuth: null, lastUserAgent: null, aborted: 0, imageHits: 0, lastImageBody: null }
 
   const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/v1/models') {
@@ -202,6 +202,7 @@ export async function startMockUpstream(options = {}) {
     if (req.method === 'POST' && (req.url === '/v1/chat/completions' || req.url === '/v1/messages')) {
       state.hits += 1
       state.lastAuth = req.headers.authorization || req.headers['x-api-key'] || null
+      state.lastUserAgent = req.headers['user-agent'] ?? null
 
       let raw = ''
       for await (const chunk of req) raw += chunk

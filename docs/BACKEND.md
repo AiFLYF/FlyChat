@@ -737,10 +737,20 @@ POST /api/chat { ..., "agent": true, "imageGeneration": true }
 - 只有「还没向客户端吐过任何字节」的失败才重试（否则会出现重复内容）。
 - 可重试：`408/409/425/429/5xx` 与 `ECONNRESET/ETIMEDOUT/ECONNREFUSED/EAI_AGAIN`。
 - 尊重上游 `Retry-After`，退避带 20% 抖动。
+- 个别中转网关按 User-Agent 过滤客户端：遇到 `403` 且提示与密钥无关时，
+  把 `UPSTREAM_USER_AGENT` 设为浏览器 UA（默认不加该头，避免伪装）。
 - 同一服务商连续失败 `BREAKER_THRESHOLD` 次后熔断 `BREAKER_COOLDOWN_MS`，期间直接返回 503 与剩余秒数。
 - 每个服务商并发上限 `UPSTREAM_CONCURRENCY`，超出排队而不是打爆上游；等待队列有上限
   （默认 100 个）。队列满了回 429 `semaphore_queue_full`，等超时回 503 `semaphore_timeout`，
   客户端断开则立刻把等待者移出队列（499 `client_aborted`），不会攒一批僵尸请求。
+
+**已知现象：开发环境偶发 ECONNRESET（非产品缺陷）**。长会话压测脚本（40 轮串行
+SSE，Windows loopback + undici 长进程连接池）观察到 2-9/40 的偶发 ECONNRESET，
+全部重试即恢复；请求间隔矩阵（0/1/3/4.5/6s）、execSync 阻塞对照、1/4/8 路并发
+（36 请求）均 0 失败复现不了，服务端 `keepAliveTimeout`（65s）远高于任何一轮的
+空闲间隔。定性为 Windows loopback 下 undici 连接池的 socket 老化，非服务端配置问题。
+前端侧已有兜底：流式连接失败且未收到任何输出时自动重试一次（见 `ChatWindow.tsx`）。
+若在生产（Linux + 反代）观察到同类现象，需要重新开案排查。
 
 ### 5.3 安全
 

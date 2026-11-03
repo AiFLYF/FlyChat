@@ -1,5 +1,6 @@
 import { consumeSSE, assertOk } from './sse.js'
 import { buildTextContent, imageAttachments } from './format.js'
+import { config } from '../config.js'
 
 /** 组装 OpenAI 兼容的 content（纯文本或 多模态 parts 数组） */
 function toContent(message) {
@@ -96,6 +97,8 @@ export async function streamOpenAICompat(
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${provider.apiKey}`,
+      // 某些中转网关按 UA 过滤客户端（见 config.chat.userAgent）
+      ...(config.chat.userAgent ? { 'User-Agent': config.chat.userAgent } : {}),
     },
     body: JSON.stringify(body),
     signal: abortSignal,

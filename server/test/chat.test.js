@@ -387,3 +387,21 @@ test('视界（多模态）：纯文本消息不受影响，content 仍是字符
   const last = upstream.state.lastBody.messages.at(-1)
   assert.equal(typeof last.content, 'string', '没有图片时不应退化为数组')
 })
+
+test('UPSTREAM_USER_AGENT：配置后透传到上游，默认不带该头', async (t) => {
+  const upstream = await startMockUpstream()
+  t.after(() => upstream.close())
+  const providerId = await createProvider(upstream.baseUrl)
+  const { config } = await import('../config.js')
+
+  const res = await chat({ provider: providerId, model: 'mock-model', messages: [{ role: 'user', content: 'hi' }] })
+  await readSse(res)
+  assert.notEqual(upstream.state.lastUserAgent, 'Mozilla/5.0 (TestBrowser)', '未配置时不得伪造浏览器 UA')
+
+  const old = config.chat.userAgent
+  config.chat.userAgent = 'Mozilla/5.0 (TestBrowser)'
+  t.after(() => { config.chat.userAgent = old })
+  const res2 = await chat({ provider: providerId, model: 'mock-model', messages: [{ role: 'user', content: 'hi' }] })
+  await readSse(res2)
+  assert.equal(upstream.state.lastUserAgent, 'Mozilla/5.0 (TestBrowser)', '配置后必须原样透传')
+})
