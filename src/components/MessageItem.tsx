@@ -10,6 +10,7 @@ import {
   Download,
   Loader2,
   Pencil,
+  Play,
   RefreshCw,
   Share2,
   Sparkles,
@@ -47,6 +48,7 @@ interface Props {
    */
   enter?: boolean
   onRegenerate?: () => void
+  onContinue?: (messageId: string) => void
   onEdit?: (messageId: string, newContent: string) => void
   onUpdateContent?: (messageId: string, newContent: string) => void
   onFeedback?: (messageId: string, feedback: 'like' | 'dislike' | null) => void
@@ -134,6 +136,7 @@ const MessageItem = memo(function MessageItem({
   isLastAssistant,
   enter = true,
   onRegenerate,
+  onContinue,
   onEdit,
   onUpdateContent,
   onFeedback,
@@ -437,6 +440,13 @@ const MessageItem = memo(function MessageItem({
             )}
 
             <CopyButton text={message.content} />
+
+            {/* 中断后续写：内容追加到本条消息，不另起气泡 */}
+            {isLastAssistant && message.status === 'aborted' && onContinue && (
+              <IconButton label="继续生成" onClick={() => onContinue(message.id)}>
+                <Play size={13} />
+              </IconButton>
+            )}
 
             {/* 改写润色菜单 (Q-2026-10-19-06) */}
             <div className="relative" ref={rewriteRef}>

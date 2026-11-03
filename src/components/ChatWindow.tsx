@@ -460,9 +460,12 @@ export default function ChatWindow() {
       history: ChatMessagePayload[],
       target: Target,
       groupId?: string,
-      priorVariants?: MessageVariant[]
+      priorVariants?: MessageVariant[],
+      opts?: { resumeMessageId?: string }
     ) => {
-      const assistantId = uid()
+      // 续写模式：复用被中断的消息（内容追加其后），不新建气泡、不产新版本
+      const resumeMessageId = opts?.resumeMessageId
+      const assistantId = resumeMessageId || uid()
       const startTime = Date.now()
       // 系统提示词按优先级解析：当前助手的专属指令 > 全局默认。
       // 不把助手指令写回全局 settings，避免创建助手对话后污染默认提示词。
@@ -473,22 +476,31 @@ export default function ChatWindow() {
         : undefined
       // 会话级提示词优先于助手默认值：用户在顶部卡片里改过之后，
       // 下一轮必须用改后的内容，否则界面显示「已更新」但实际还在用旧提示词。
-      const systemPrompt = conversation?.systemPrompt?.trim()
+      let systemPrompt = conversation?.systemPrompt?.trim()
         ? conversation.systemPrompt
         : assistant?.systemPrompt?.trim()
           ? assistant.systemPrompt
           : settings.systemPrompt
-      addMessage(conversationId, {
-        id: assistantId,
-        role: 'assistant',
-        content: '',
-        createdAt: Date.now(),
-        model: target.model,
-        groupId,
-        status: 'streaming',
-        variants: priorVariants && priorVariants.length > 0 ? priorVariants : undefined,
-        currentVariantIndex: priorVariants && priorVariants.length > 0 ? priorVariants.length : 0,
-      })
+      if (resumeMessageId) {
+        systemPrompt = [systemPrompt, '你上一次回答被中断了。请从中断处无缝继续，直接输出剩余内容：不要重复已输出的部分，不要加任何过渡语或解释。']
+          .filter(Boolean)
+          .join('\n\n')
+      }
+      if (resumeMessageId) {
+        updateMessage(conversationId, assistantId, { status: 'streaming' })
+      } else {
+        addMessage(conversationId, {
+          id: assistantId,
+          role: 'assistant',
+          content: '',
+          createdAt: Date.now(),
+          model: target.model,
+          groupId,
+          status: 'streaming',
+          variants: priorVariants && priorVariants.length > 0 ? priorVariants : undefined,
+          currentVariantIndex: priorVariants && priorVariants.length > 0 ? priorVariants.length : 0,
+        })
+      }
       markStreaming(assistantId, true)
       // 流式高频写入：暂停整份 store 落盘，待流结束一次性 flush（见 finally）
       pausePersist()
@@ -632,7 +644,8 @@ export default function ChatWindow() {
           .conversations.find((c) => c.id === conversationId)
           ?.messages.find((m) => m.id === assistantId)
         const currentVariants = finishedMsg?.variants ? [...finishedMsg.variants] : []
-        if (finishedMsg && (finishedMsg.content || finishedMsg.toolCalls?.length)) {
+        // 续写不算新版本：它补全的是同一次回答
+        if (!resumeMessageId && finishedMsg && (finishedMsg.content || finishedMsg.toolCalls?.length)) {
           currentVariants.push({
             id: 'v-' + Date.now(),
             content: finishedMsg.content,
@@ -651,8 +664,12 @@ export default function ChatWindow() {
         updateMessage(conversationId, assistantId, {
           status: 'done',
           reasoningTimeMs: durationMs,
-          variants: currentVariants.length > 1 ? currentVariants : undefined,
-          currentVariantIndex: currentVariants.length > 1 ? currentVariants.length - 1 : 0,
+          ...(resumeMessageId
+            ? {}
+            : {
+                variants: currentVariants.length > 1 ? currentVariants : undefined,
+                currentVariantIndex: currentVariants.length > 1 ? currentVariants.length - 1 : 0,
+              }),
         })
 
         // 自动拉取追问建议 (Q-2026-10-19-06)
@@ -855,6 +872,29 @@ export default function ChatWindow() {
     ).catch(() => {})
   }, [streaming, removeMessagesAfter, buildHistory, targets, runCompletion])
 
+  /** 中断后续写：把已生成的部分内容作为 assistant 前缀，让模型无缝接下去写。
+   *  内容追加到原消息（不新建气泡、不产新版本），历史里不留「请继续」痕迹。 */
+  const handleContinue = useCallback(
+    (messageId: string) => {
+      if (streaming) return
+      const state = useChatStore.getState()
+      const conv = state.conversations.find((c) => c.id === state.activeId)
+      if (!conv) return
+      const idx = conv.messages.findIndex((m) => m.id === messageId)
+      if (idx < 0) return
+      const msg = conv.messages[idx]
+      if (msg.role !== 'assistant' || !msg.content) return
+      // 历史截至该消息（含其部分内容作为前缀），模型在续写提示下接着输出
+      const usable = conv.messages.slice(0, idx + 1).filter((m) => !m.error && (m.content || m.attachments?.length))
+      const history = usable.map((m) => ({ role: m.role, content: m.content, attachments: m.attachments }))
+      // 用该消息当初的模型；provider 跟随当前选中（消息的 provider 未落字段，多模型对比列是 groupId 场景，续写按单目标处理）
+      const target = targets.find((t) => t.model === msg.model) || targets[0]
+      setNotice('')
+      void runCompletion(conv.id, history, target, undefined, undefined, { resumeMessageId: messageId }).catch(() => {})
+    },
+    [streaming, targets, runCompletion]
+  )
+
   /** 编辑用户消息并重新发送 */
   const handleEdit = useCallback(
     (messageId: string, newContent: string) => {
@@ -1029,7 +1069,7 @@ export default function ChatWindow() {
             type="button"
             onClick={() => setShuffleSeed((s) => s + 1)}
             title="换一批灵感"
-            className="flex shrink-0 items-center gap-1 text-[11px] text-ink-3 hover:text-accent transition-colors px-1.5 py-0.5 rounded-md hover:bg-hover"
+            className="flex shrink-0 items-center gap-1 text-[11px] text-ink-3 hover:text-accent transition-colors px-1.5 py-0.5 max-md:px-2.5 max-md:py-2 rounded-md hover:bg-hover"
           >
             <RotateCw size={11} />
             <span className="hidden sm:inline">换一组</span>
@@ -1349,6 +1389,7 @@ export default function ChatWindow() {
                       isLastAssistant={isLastAssistant && !streaming}
                       enter={enter}
                       onRegenerate={handleRegenerate}
+                      onContinue={handleContinue}
                       onEdit={m.role === 'user' ? handleEdit : undefined}
                       onUpdateContent={handleUpdateContent}
                       onFeedback={handleFeedback}

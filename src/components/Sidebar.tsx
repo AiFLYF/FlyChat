@@ -745,7 +745,7 @@ export default function Sidebar({ open }: { open: boolean }) {
         </span>
         <button
           onClick={() => setIsCreatingFolder(true)}
-          className="press flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] hover:bg-hover hover:text-ink-1 transition-ui"
+          className="press flex items-center gap-1 rounded px-1.5 py-0.5 max-md:px-2.5 max-md:py-2 text-[11px] hover:bg-hover hover:text-ink-1 transition-ui"
           title="新建文件夹"
         >
           <FolderPlus size={13} />
@@ -827,12 +827,12 @@ export default function Sidebar({ open }: { open: boolean }) {
               className="rounded-lg transition-colors"
             >
               {/* 文件夹头 */}
-              <div className="group flex items-center justify-between rounded-md px-1.5 py-1 text-ink-2 hover:bg-hover hover:text-ink-1">
+              <div className="group flex items-center justify-between rounded-md px-1.5 py-0.5 text-ink-2 hover:bg-hover hover:text-ink-1">
                 <button
                   onClick={() => toggleFolderExpanded(folder.id)}
                   aria-expanded={isExpanded}
                   aria-label={`${isExpanded ? '收起' : '展开'}文件夹 ${folder.name}`}
-                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[12px] font-medium"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 py-1 max-md:py-2.5 text-left text-[12px] font-medium"
                 >
                   <ChevronRight
                     size={13}
