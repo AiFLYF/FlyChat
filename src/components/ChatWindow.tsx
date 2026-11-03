@@ -535,67 +535,95 @@ export default function ChatWindow() {
         const activeWorkspaceId =
           activePreset?.workspaceId || (hasReadyDoc ? knowledgeState.activeWorkspaceId : undefined)
 
-        await streamChat(
-          {
-            settings: {
-              ...settings,
-              provider: target.provider,
-              model: target.model,
-              systemPrompt,
-            },
-            model: target.model,
-            messages: history,
-            webSearch: settings.webSearch,
-            thinking: settings.thinking,
-            tools: settings.tools !== false,
-            imageGeneration: settings.imageGeneration,
-            presetId: activePreset?.id,
-            workspaceId: activeWorkspaceId,
-            documentIds: conversation?.documentIds,
-            conversationId,
-            onDelta: (text) => {
-              pendingContent += text
-              scheduleFlush()
-            },
-            onReasoning: (text) => {
-              pendingReasoning += text
-              scheduleFlush()
-            },
-            onCitations: (citations) => updateMessage(conversationId, assistantId, { citations }),
-            onSources: (sources) => updateMessage(conversationId, assistantId, { sources }),
-            onImage: (evt) => appendGeneratedImages(conversationId, assistantId, evt.images),
-            onToolCall: (tc) => {
-              const currentMsg = useChatStore
-                .getState()
-                .conversations.find((c) => c.id === conversationId)
-                ?.messages.find((m) => m.id === assistantId)
-              const existing = currentMsg?.toolCalls || []
-              const idx = existing.findIndex((x) => x.id === tc.id)
-              const updated = idx >= 0
-                ? existing.map((x, i) => (i === idx ? { ...x, ...tc } : x))
-                : [...existing, tc]
-              updateMessage(conversationId, assistantId, { toolCalls: updated })
-            },
-            onToolResult: (tr) => {
-              const currentMsg = useChatStore
-                .getState()
-                .conversations.find((c) => c.id === conversationId)
-                ?.messages.find((m) => m.id === assistantId)
-              const existing = currentMsg?.toolResults || []
-              const idx = existing.findIndex((x) => x.id === tr.id)
-              const updated = idx >= 0
-                ? existing.map((x, i) => (i === idx ? { ...x, ...tr } : x))
-                : [...existing, tr]
-              updateMessage(conversationId, assistantId, { toolResults: updated })
-              setNotice((n) => (isProgressNotice(n) ? '' : n))
-            },
-            onModelSwitch: (modelSwitch) => updateMessage(conversationId, assistantId, { modelSwitch }),
-            onUsage: (usage) => updateMessage(conversationId, assistantId, { usage }),
-            onNotice: (message) => setNotice(message),
-            onMeta: (meta) => updateMessage(conversationId, assistantId, { meta }),
-          },
-          controller.signal
-        )
+        // 断线自动重试：一个字符都还没收到时的纯连接失败（丢包/对端 RST），
+        // 自动重试一次，用户不用手动点。已有输出（重试会覆盖部分内容）或
+        // 语义错误（4xx/模型错误，重试无意义）不重试。
+        let streamErr = null
+        for (let attempt = 0; ; attempt++) {
+          try {
+            await streamChat(
+              {
+                settings: {
+                  ...settings,
+                  provider: target.provider,
+                  model: target.model,
+                  systemPrompt,
+                },
+                model: target.model,
+                messages: history,
+                webSearch: settings.webSearch,
+                thinking: settings.thinking,
+                tools: settings.tools !== false,
+                imageGeneration: settings.imageGeneration,
+                presetId: activePreset?.id,
+                workspaceId: activeWorkspaceId,
+                documentIds: conversation?.documentIds,
+                conversationId,
+                onDelta: (text) => {
+                  pendingContent += text
+                  scheduleFlush()
+                },
+                onReasoning: (text) => {
+                  pendingReasoning += text
+                  scheduleFlush()
+                },
+                onCitations: (citations) => updateMessage(conversationId, assistantId, { citations }),
+                onSources: (sources) => updateMessage(conversationId, assistantId, { sources }),
+                onImage: (evt) => appendGeneratedImages(conversationId, assistantId, evt.images),
+                onToolCall: (tc) => {
+                  const currentMsg = useChatStore
+                    .getState()
+                    .conversations.find((c) => c.id === conversationId)
+                    ?.messages.find((m) => m.id === assistantId)
+                  const existing = currentMsg?.toolCalls || []
+                  const idx = existing.findIndex((x) => x.id === tc.id)
+                  const updated = idx >= 0
+                    ? existing.map((x, i) => (i === idx ? { ...x, ...tc } : x))
+                    : [...existing, tc]
+                  updateMessage(conversationId, assistantId, { toolCalls: updated })
+                },
+                onToolResult: (tr) => {
+                  const currentMsg = useChatStore
+                    .getState()
+                    .conversations.find((c) => c.id === conversationId)
+                    ?.messages.find((m) => m.id === assistantId)
+                  const existing = currentMsg?.toolResults || []
+                  const idx = existing.findIndex((x) => x.id === tr.id)
+                  const updated = idx >= 0
+                    ? existing.map((x, i) => (i === idx ? { ...x, ...tr } : x))
+                    : [...existing, tr]
+                  updateMessage(conversationId, assistantId, { toolResults: updated })
+                  setNotice((n) => (isProgressNotice(n) ? '' : n))
+                },
+                onModelSwitch: (modelSwitch) => updateMessage(conversationId, assistantId, { modelSwitch }),
+                onUsage: (usage) => updateMessage(conversationId, assistantId, { usage }),
+                onNotice: (message) => setNotice(message),
+                onMeta: (meta) => updateMessage(conversationId, assistantId, { meta }),
+              },
+              controller.signal
+            )
+            streamErr = null
+            break
+          } catch (err) {
+            streamErr = err
+            const isAbort =
+              controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')
+            if (isAbort || attempt >= 1 || !mountedRef.current) break
+            const msgNow = useChatStore
+              .getState()
+              .conversations.find((c) => c.id === conversationId)
+              ?.messages.find((m) => m.id === assistantId)
+            const hasOutput = !!(pendingContent || pendingReasoning || msgNow?.content || msgNow?.reasoning)
+            const networkish = /中断|failed to fetch|network|econnreset|load failed/i.test(
+              String((err instanceof Error ? err.message : '') || err)
+            )
+            if (hasOutput || !networkish) break
+            setNotice('连接中断，正在自动重试…')
+            await new Promise((r) => setTimeout(r, 1500))
+            if (controller.signal.aborted) break
+          }
+        }
+        if (streamErr) throw streamErr
         flushNow()
         if (!mountedRef.current || controller.signal.aborted) return
         const durationMs = Date.now() - startTime
@@ -646,8 +674,10 @@ export default function ChatWindow() {
             .finally(() => { abortRef.current = abortRef.current.filter((c) => c !== suggestionController) })
         }
       } catch (err) {
-        if (!mountedRef.current) return
+        // flushNow 必须在 mountedRef 检查之前：页面刷新/登出卸载时，
+        // pending 缓冲区里最后一段内容仍要落盘，否则刷新后丢失最后几个字。
         flushNow()
+        if (!mountedRef.current) return
         const aborted =
           controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')
         const current = useChatStore
